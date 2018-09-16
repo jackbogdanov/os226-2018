@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	const size_t memsz = 0x100000;
+	const size_t memsz = 0x1000000;
 	void *mem = mmap(NULL, memsz, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (MAP_FAILED == mem) {
 		perror("can't alloc mem");

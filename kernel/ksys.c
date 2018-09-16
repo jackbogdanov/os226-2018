@@ -65,6 +65,9 @@ typedef struct {
 	Elf64_Xword p_align;
 } Elf64_Phdr;
 
+#define ST_WORK 0
+#define ADD_WORK 1
+
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
 	return (const char*)ch + sizeof(struct cpio_old_hdr);
 }
@@ -92,6 +95,28 @@ static unsigned int cpio_rminor(const struct cpio_old_hdr *ch) {
 }
 #endif
 
+void * mem_alloc(size_t size, short flag) {
+
+	if (flag == ST_WORK) {
+		void * mark = kernel_globals.mem_ptr;
+		kernel_globals.block_sizes[kernel_globals.block_ptr] = size;
+		kernel_globals.block_ptr++;
+		kernel_globals.mem_ptr += size;
+		return 	mark;
+	} else {
+		kernel_globals.mem_ptr += size;
+		kernel_globals.block_sizes[kernel_globals.block_ptr + CURRENT_SIZE_PTR_OFFSET] += size;
+		return NULL;
+	}
+
+}
+
+void free_mem(void *ptr) {
+	size_t block_size = kernel_globals.block_sizes[kernel_globals.block_ptr + PREVIOUS_SIZE_PTR_OFFSET];
+	kernel_globals.mem_ptr -= block_size;
+	kernel_globals.block_ptr--;
+}
+
 static const struct cpio_old_hdr *find_exe(char *name) {
 	const struct cpio_old_hdr *start = kernel_globals.rootfs_cpio;
 	const struct cpio_old_hdr *found = NULL;
@@ -113,16 +138,29 @@ void *load(char *name, void **entry) {
 		return NULL;
 	}
 
-	// http://www.sco.com/developers/gabi/latest/contents.html
 	const char *rawelf = cpio_content(ch);
+	Elf64_Ehdr *elf_ptr = (Elf64_Ehdr *) rawelf;
+	Elf64_Phdr *sec_table = (Elf64_Phdr *) (rawelf + elf_ptr->e_phoff);
+	void *mark = mem_alloc(sec_table->p_filesz, ST_WORK);
 
-	// IMPL ME
-	rawelf = rawelf;
-	return NULL;
+	int sec_num = elf_ptr->e_phnum;
+
+	while(sec_num--) {
+		if (sec_table->p_type == PT_LOAD) {
+			memcpy(mark + sec_table->p_vaddr, rawelf + sec_table->p_offset, sec_table->p_filesz);
+			if (sec_num) {
+				mem_alloc(sec_table->p_filesz, ADD_WORK);
+			}
+		}
+		sec_table = (Elf64_Phdr *) ((unsigned char *) sec_table + elf_ptr->e_shentsize);
+	}
+
+	*entry = mark + elf_ptr->e_entry;
+	return mark;
 }
 
 void unload(void *mark) {
-	// IMPL ME
+	free_mem(mark);
 }
 
 static void tramprun(unsigned long *args) {
