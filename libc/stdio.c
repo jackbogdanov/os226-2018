@@ -46,7 +46,6 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
 				o = va_arg(ap, char *);
 				os = strlen(o);
 				break;
-#if 0
 			case 'd': {
 				char *p = b + sizeof(b) - 1;
 				int d = va_arg(ap, int);
@@ -54,8 +53,11 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
 					*p-- = '0';
 				} else {
 					bool m = d < 0;
+					if (m) {
+						d = -d;
+					}
 					while (d && p != b) {
-						*p-- = d % 10;
+						*p-- = '0' + d % 10;
 						d /= 10;
 					}
 					if (p != b && m) {
@@ -66,7 +68,6 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
 				os = b + sizeof(b) - o;
 				break;
 			}
-#endif
 			case 'c':
 				b[0] = (char) va_arg(ap, int);
 				o = b;

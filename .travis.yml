@@ -4,5 +4,6 @@ sudo: false
 env:
         matrix:
                 - TEST=eduos_shell
+                - TEST=sigtest
 
 script : ./test/run.sh -v $TEST

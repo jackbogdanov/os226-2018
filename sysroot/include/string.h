@@ -6,6 +6,8 @@ int strcmp(const char *s1, const char *s2);
 
 size_t strlen(const char *s);
 
+char *strcpy(char *dest, const char *src);
+
 char *strtok_r(char *str, const char *delim, char **saveptr);
 
 char *strchr(const char *s, int c);

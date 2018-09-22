@@ -18,6 +18,14 @@ size_t strlen(const char *s) {
 	return p - s;
 }
 
+char *strcpy(char *dest, const char *src) {
+	char *p = dest;
+	while (*src) {
+		*dest++ = *src++;
+	}
+	return p;
+}
+
 char *strchr(const char *s, int c) {
 	for (const char *p = s; *p != '\0'; ++p) {
 		if (*p == c) {

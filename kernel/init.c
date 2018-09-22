@@ -17,13 +17,8 @@ void kernel_init(void *rootfs_cpio, void *mem, size_t sz, const char* args) {
 
 void kernel_start(void) {
 	char *argv[] = { "shell", NULL };
-	void *entry;
-	void *mark = load(argv[0], &entry);
-	if (mark) {
-		((int (*)(int, char **))entry)(1, argv);
-		unload(mark);
+	if (run_first(argv)) {
+		panic("first process failed");
 	}
-
-	hal_halt();
-	while (1);
+	panic("first process exited");
 }

@@ -29,7 +29,6 @@ BUILD = ./build
 IMAGE = $(BUILD)/image
 ROOTFS = $(BUILD)/rootfs.cpio
 
-KER = $(BUILD)/kernel.o
 LIBC = $(BUILD)/libc.a
 
 KSRC = $(wildcard kernel/*.c)
@@ -52,12 +51,12 @@ $(AOBJ) : CFLAGS += $(UCFLAGS) -fPIC
 
 $(AOBJ:%.o=%) : $(LIBC)
 $(AEXE) : % : %.o
-	ld -nostdlib -N -e main -o $@ $< $(LIBC)
+	ld -nostdlib -N -e _main -o $@ $< $(LIBC)
 
 all : $(IMAGE) $(ROOTFS)
 
 $(IMAGE) : $(KOBJ) $(HOBJ) $(LIBC)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lrt -lpthread $(HALDIR)/kernel.ld
 
 $(BUILD)/%.o : %.c
 	@mkdir -p $(@D)
@@ -66,9 +65,6 @@ $(BUILD)/%.o : %.c
 $(BUILD)/%.o : %.S
 	@mkdir -p $(@D)
 	$(CC) -c $(ASFLAGS) -o $@ $<
-
-$(KER) : $(KOBJ) $(HOBJ) $(LIBC)
-	ld -T $(HALDIR)/kernel.ld -r -o $@ $^
 
 $(LIBC) : $(COBJ)
 	ar rcs $@ $^

@@ -30,7 +30,4 @@ SYSCALL_XN(DECLARE)
 #undef DECLARE
 #undef DO_DECLARE
 
-extern void *load(char *name, void **entry);
-
-extern void unload(void *mark);
-
+int run_first(char *argv[]);

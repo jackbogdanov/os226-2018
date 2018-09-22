@@ -17,6 +17,10 @@ static ucontext_t *h2uctx(struct context *hctx) {
 	return (ucontext_t *) &hctx->host_uctx;
 }
 
+static greg_t *h2gregs(struct context *ctx) {
+	return h2uctx(ctx)->uc_mcontext.gregs;
+}
+
 void ctx_push(struct context *ctx, unsigned long val) {
 	greg_t *regs = h2uctx(ctx)->uc_mcontext.gregs;
 	regs[REG_RSP] -= sizeof(unsigned long);
@@ -36,4 +40,19 @@ void ctx_call_setup(struct context *ctx, void(*tramp)(unsigned long *), struct c
 void ctx_call_end(struct context *ctx, struct context_call_save *save) {
 	ctx_push(ctx, save->spbeforearg);
 	ctx_push(ctx, save->calltraget);
+}
+
+void ctx_save(struct context *ctx, struct context *save, void *entry, void *stack, int stacksz) {
+	greg_t *regs = h2gregs(ctx);
+	greg_t *regsave = h2gregs(save);
+
+	memcpy(regsave, regs, sizeof(gregset_t));
+	regs[REG_RSP] = (greg_t) stack + stacksz - 16;
+	regs[REG_RBP] = (greg_t) regs[REG_RSP];
+	regs[REG_RIP] = (greg_t) entry;
+	// FIXME clear other regs
+}
+
+void ctx_restore(struct context *ctx, struct context *save) {
+	memcpy(h2gregs(ctx), h2gregs(save), sizeof(gregset_t));
 }

@@ -1,15 +1,16 @@
-
 #include <stddef.h>
 #include <stdint.h>
 #include "string.h"
 
 #include "init.h"
+#include "pool.h"
 #include "kernel/util.h"
 #include "hal/context.h"
 #include "hal_context.h"
 #include "hal/dbg.h"
 
 #include "ksys.h"
+#include "proc.h"
 
 struct cpio_old_hdr {
 	unsigned short   c_magic;
@@ -65,8 +66,42 @@ typedef struct {
 	Elf64_Xword p_align;
 } Elf64_Phdr;
 
-#define ST_WORK 0
-#define ADD_WORK 1
+static struct proc procspace[8];
+static struct pool procpool = POOL_INITIALIZER_ARRAY(procpool, procspace);
+
+static struct proc *curp;
+
+static char *execbufp;
+static void allocinit() {
+	if (!execbufp) {
+		execbufp = kernel_globals.mem;
+	}
+}
+
+static void *alloc(int size) {
+	const size_t execbufsz = kernel_globals.memsz;
+	char *const execbuf = kernel_globals.mem;
+
+	allocinit();
+
+	if (execbuf + execbufsz - execbufp < size) {
+		return NULL;
+	}
+
+	char *curexecbuf = execbufp;
+	execbufp += size;
+	return curexecbuf;
+}
+
+static void freeup(void *mark) {
+	allocinit();
+	execbufp = mark;
+}
+
+static void *freemark(void) {
+	allocinit();
+	return execbufp;
+}
 
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
 	return (const char*)ch + sizeof(struct cpio_old_hdr);
@@ -95,28 +130,6 @@ static unsigned int cpio_rminor(const struct cpio_old_hdr *ch) {
 }
 #endif
 
-void * mem_alloc(size_t size, short flag) {
-
-	if (flag == ST_WORK) {
-		void * mark = kernel_globals.mem_ptr;
-		kernel_globals.block_sizes[kernel_globals.block_ptr] = size;
-		kernel_globals.block_ptr++;
-		kernel_globals.mem_ptr += size;
-		return 	mark;
-	} else {
-		kernel_globals.mem_ptr += size;
-		kernel_globals.block_sizes[kernel_globals.block_ptr + CURRENT_SIZE_PTR_OFFSET] += size;
-		return NULL;
-	}
-
-}
-
-void free_mem(void *ptr) {
-	size_t block_size = kernel_globals.block_sizes[kernel_globals.block_ptr + PREVIOUS_SIZE_PTR_OFFSET];
-	kernel_globals.mem_ptr -= block_size;
-	kernel_globals.block_ptr--;
-}
-
 static const struct cpio_old_hdr *find_exe(char *name) {
 	const struct cpio_old_hdr *start = kernel_globals.rootfs_cpio;
 	const struct cpio_old_hdr *found = NULL;
@@ -132,37 +145,55 @@ static const struct cpio_old_hdr *find_exe(char *name) {
 	return found;
 }
 
-void *load(char *name, void **entry) {
+int load(char *name, void **entry, struct proc *proc) {
 	const struct cpio_old_hdr *ch = find_exe(name);
 	if (!ch) {
-		return NULL;
+		return -1;
 	}
-
 	const char *rawelf = cpio_content(ch);
-	Elf64_Ehdr *elf_ptr = (Elf64_Ehdr *) rawelf;
-	Elf64_Phdr *sec_table = (Elf64_Phdr *) (rawelf + elf_ptr->e_phoff);
-	void *mark = mem_alloc(sec_table->p_filesz, ST_WORK);
 
-	int sec_num = elf_ptr->e_phnum;
-
-	while(sec_num--) {
-		if (sec_table->p_type == PT_LOAD) {
-			memcpy(mark + sec_table->p_vaddr, rawelf + sec_table->p_offset, sec_table->p_filesz);
-			if (sec_num) {
-				mem_alloc(sec_table->p_filesz, ADD_WORK);
-			}
-		}
-		sec_table = (Elf64_Phdr *) ((unsigned char *) sec_table + elf_ptr->e_shentsize);
+	const char elfhdrpat[] = { 0x7f, 'E', 'L', 'F', 2 };
+	if (memcmp(rawelf, elfhdrpat, sizeof(elfhdrpat))) {
+		return -1;
 	}
 
-	*entry = mark + elf_ptr->e_entry;
-	return mark;
+	const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *) rawelf;
+	if (!ehdr->e_phoff ||
+			!ehdr->e_phnum ||
+			!ehdr->e_entry ||
+			ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
+		return -1;
+	}
+	const Elf64_Phdr *phdrs = (const Elf64_Phdr *) (rawelf + ehdr->e_phoff);
+
+	const Elf64_Phdr *loadhdr = NULL;
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		if (phdrs[i].p_type == PT_LOAD) {
+			loadhdr = phdrs + i;
+			break;
+		}
+	}
+	if (!loadhdr) {
+		return -1;
+	}
+
+	if (ehdr->e_entry < loadhdr->p_vaddr ||
+			loadhdr->p_vaddr + loadhdr->p_memsz <= ehdr->e_entry) {
+		return -1;
+	}
+
+	const int loadsz = align(loadhdr->p_memsz, 0xfff);
+	char *loadp = alloc(loadsz);
+	memset(loadp, 0, loadhdr->p_memsz);
+	memcpy(loadp, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
+
+	*entry = loadp + ehdr->e_entry - loadhdr->p_vaddr;
+	proc->load = loadp;
+	proc->loadsz = loadsz;
+	return 0;
 }
 
-void unload(void *mark) {
-	free_mem(mark);
-}
-
+#if 0
 static void tramprun(unsigned long *args) {
 	int *code = (int *) args[0];
 	char **argv = (char **) args[1];
@@ -179,7 +210,47 @@ static void tramprun(unsigned long *args) {
 		*code = r;
 	}
 
-	unload(mark);
+	freeup(mark);
+}
+#endif
+
+struct proc *current_process() {
+	return curp;
+}
+
+int run_first(char *argv[]) {
+	struct proc *newp = pool_alloc(&procpool);
+	assert(newp);
+
+	newp->freemark = NULL;
+
+	void *entry;
+	if (load(argv[0], &entry, newp)) {
+		goto failload;
+	}
+
+	newp->stacksz = 0x2000;
+	newp->stack = alloc(newp->stacksz);
+	if (!newp->stack) {
+		goto failstack;
+	}
+
+	newp->argv = argv;
+	newp->code = NULL;
+	newp->prev = NULL;
+	curp = newp;
+
+
+	void (*mentry)(void) = entry;
+	mentry();
+
+	hal_halt();
+	while (1);
+failstack:
+	freeup(newp->freemark);
+failload:
+	pool_free(&procpool, newp);
+	return -1;
 }
 
 int sys_run(struct context *ctx, char *argv[], int *code) {
@@ -187,20 +258,82 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 		return -1;
 	}
 
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		goto failproc;
+	}
+
+	newp->freemark = freemark();
+
 	void *entry;
-	void *mark = load(argv[0], &entry);
-	if (!mark) {
+	if (load(argv[0], &entry, newp)) {
+		goto failload;
+	}
+
+	struct proc *oldp = curp;
+	newp->stacksz = 0x2000;
+	newp->stack = alloc(newp->stacksz);
+	if (!newp->stack) {
+		goto failstack;
+	}
+
+	newp->argv = argv;
+	newp->code = code;
+	ctx_save(ctx, &oldp->savectx, entry, newp->stack, newp->stacksz);
+	newp->prev = oldp;
+	curp = newp;
+
+	return 0;
+failstack:
+	freeup(newp->freemark);
+failload:
+	pool_free(&procpool, newp);
+failproc:
+	return -1;
+}
+
+int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argvsz) {
+	int argc = 0;
+	char *bufp = buf;
+
+	for (char **arg = curp->argv; *arg; ++arg) {
+		if (argvsz < argc) {
+			return -1;
+		}
+
+		int len = strlen(*arg);
+		if (buf + bufsz - bufp < len) {
+			return -1;
+		}
+
+		strcpy(bufp, *arg);
+		argv[argc++] = bufp;
+		bufp += len + 1;
+	}
+	if (argvsz <= argc) {
 		return -1;
 	}
-	struct context_call_save save;
+	argv[argc] = NULL;
+	return argc;
+}
 
-	ctx_call_setup(ctx, tramprun, &save);
-	ctx_push(ctx, (unsigned long) mark);
-	ctx_push(ctx, (unsigned long) entry);
-	ctx_push(ctx, (unsigned long) argv);
-	ctx_push(ctx, (unsigned long) code);
-	ctx_call_end(ctx, &save);
+int sys_exit(struct context *ctx, int code) {
+	struct proc *newp = curp;
+	struct proc *oldp = newp->prev;
 
+	if (!oldp) {
+		// init exits
+		hal_halt();
+	}
+
+	if (newp->code) {
+		*newp->code = code;
+	}
+	ctx_restore(ctx, &oldp->savectx);
+
+	freeup(newp->freemark);
+	pool_free(&procpool, newp);
+	curp = oldp;
 	return 0;
 }
 
@@ -212,4 +345,3 @@ int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
 }
-
