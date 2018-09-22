@@ -1,3 +1,4 @@
+
 #include <stddef.h>
 #include <stdint.h>
 #include "string.h"
@@ -11,6 +12,7 @@
 
 #include "ksys.h"
 #include "proc.h"
+#include "exn.h"
 
 struct cpio_old_hdr {
 	unsigned short   c_magic;
@@ -218,6 +220,25 @@ struct proc *current_process() {
 	return curp;
 }
 
+//static void tramprun(unsigned long *args) {
+//	dbg_out("AAA\n", 4);
+//}
+
+static bool syscall_hnd(int exn, struct context *c, void *arg) {
+	dbg_out("call\n", 5);
+	//void (*fun)(int) = arg;
+	//fun(exn);
+//	struct context_call_save save;
+
+	//ctx_call_setup(c, tramprun, &save);
+	//ctx_push(c, (unsigned long) exn);
+	//ctx_call_end(c, &save);
+	
+	struct proc * curp = current_process();
+	ctx_save(c, &curp->savectx, arg, curp->stack, curp->stacksz);
+	return true;
+}
+
 int run_first(char *argv[]) {
 	struct proc *newp = pool_alloc(&procpool);
 	assert(newp);
@@ -257,6 +278,8 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 	if (!argv[0]) {
 		return -1;
 	}
+	
+	dbg_out("ran\n", 4);
 
 	struct proc *newp = pool_alloc(&procpool);
 	if (!newp) {
@@ -282,7 +305,8 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 	ctx_save(ctx, &oldp->savectx, entry, newp->stack, newp->stacksz);
 	newp->prev = oldp;
 	curp = newp;
-
+	
+	dbg_out("end run\n", 8);
 	return 0;
 failstack:
 	freeup(newp->freemark);
@@ -318,6 +342,7 @@ int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argv
 }
 
 int sys_exit(struct context *ctx, int code) {
+	dbg_out("end\n", 4);
 	struct proc *newp = curp;
 	struct proc *oldp = newp->prev;
 
@@ -345,3 +370,11 @@ int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
 }
+
+int sys_set_hnd(struct context *ctx, int sign, void * hnd) {
+	dbg_out("qqq\n", 4);
+	exn_set_hnd(sign, syscall_hnd, hnd);
+	exn_do(40, ctx);
+	return 0;
+}
+
