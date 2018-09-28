@@ -225,7 +225,7 @@ struct proc *current_process() {
 //}
 
 static bool syscall_hnd(int exn, struct context *c, void *arg) {
-	dbg_out("call\n", 5);
+	//dbg_out("call\n", 5);
 	//void (*fun)(int) = arg;
 	//fun(exn);
 //	struct context_call_save save;
@@ -279,7 +279,7 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 		return -1;
 	}
 	
-	dbg_out("ran\n", 4);
+	//dbg_out("ran\n", 4);
 
 	struct proc *newp = pool_alloc(&procpool);
 	if (!newp) {
@@ -306,7 +306,7 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 	newp->prev = oldp;
 	curp = newp;
 	
-	dbg_out("end run\n", 8);
+	//dbg_out("end run\n", 8);
 	return 0;
 failstack:
 	freeup(newp->freemark);
@@ -342,7 +342,7 @@ int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argv
 }
 
 int sys_exit(struct context *ctx, int code) {
-	dbg_out("end\n", 4);
+	//dbg_out("end\n", 4);
 	struct proc *newp = curp;
 	struct proc *oldp = newp->prev;
 
@@ -372,9 +372,9 @@ int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
 }
 
 int sys_set_hnd(struct context *ctx, int sign, void * hnd) {
-	dbg_out("qqq\n", 4);
+	//dbg_out("qqq\n", 4);
 	exn_set_hnd(sign, syscall_hnd, hnd);
-	exn_do(40, ctx);
+	//exn_do(40, ctx);
 	return 0;
 }
 

@@ -9,7 +9,6 @@
 #include <ucontext.h>
 #include <string.h>
 
-#include "hal/dbg.h"
 
 STATIC_ASSERT(sizeof(ucontext_t) <= HOST_UCTX_SZ);
 
@@ -24,14 +23,12 @@ static greg_t *h2gregs(struct context *ctx) {
 }
 
 void ctx_push(struct context *ctx, unsigned long val) {
-	dbg_out("in ctx_push\n", 12);
 	greg_t *regs = h2uctx(ctx)->uc_mcontext.gregs;
 	regs[REG_RSP] -= sizeof(unsigned long);
 	*(unsigned long *) regs[REG_RSP] = val;
 }
 
 void ctx_call_setup(struct context *ctx, void(*tramp)(unsigned long *), struct context_call_save *save) {
-	dbg_out("in ctx_call_setup\n", 18);
 	greg_t *regs = h2uctx(ctx)->uc_mcontext.gregs;
 
 	ctx_push(ctx, regs[REG_RIP]);
@@ -47,7 +44,6 @@ void ctx_call_end(struct context *ctx, struct context_call_save *save) {
 }
 
 void ctx_save(struct context *ctx, struct context *save, void *entry, void *stack, int stacksz) {
-	dbg_out("in ctx_save\n", 12);
 	greg_t *regs = h2gregs(ctx);
 	greg_t *regsave = h2gregs(save);
 

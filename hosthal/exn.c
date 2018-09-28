@@ -97,6 +97,7 @@ static void TSECTION host_vm_prot(bool restore) {
 
 static void TSECTION sighnd(int sig, siginfo_t *info, void *ctx) {
 	host_vm_prot(true);
+	//exn_do(40, (struct context *) ctx);
 	exn_do(sig, (struct context *) ctx);
 	host_vm_prot(false);
 }

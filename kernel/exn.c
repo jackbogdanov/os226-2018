@@ -12,10 +12,6 @@ static struct exndes {
 
 int exn_set_hnd(int exn, exn_hnd_t h, void *arg) {
 
-	if (exn == 40) {
-		dbg_out("echo setting hnd\n", 17);
-	}
-
 	if (exn < 0 || EXN_N_MAX <= exn) {
 		return -1;
 	}
@@ -27,10 +23,6 @@ int exn_set_hnd(int exn, exn_hnd_t h, void *arg) {
 }
 
 void exn_do(int exn, struct context *c) {
-	if (exn == 40) {
-		dbg_out("echo doing hnd\n", 15);
-	}
-
 	assert(0 <= exn && exn < EXN_N_MAX);
 	struct exndes *e = &exn_hnd_table[exn];
 
@@ -38,5 +30,11 @@ void exn_do(int exn, struct context *c) {
 		return;
 	}
 
-	e->hnd(exn, c, e->arg);
+	if (e->hnd(exn, c, e->arg)) {
+		return;	
+	}
+	
+	e = &exn_hnd_table[PROGRAM_EXN_HND];
+
+	e->hnd(PROGRAM_EXN_HND, c, e->arg);
 }
