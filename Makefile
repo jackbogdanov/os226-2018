@@ -51,7 +51,7 @@ $(AOBJ) : CFLAGS += $(UCFLAGS) -fPIC
 
 $(AOBJ:%.o=%) : $(LIBC)
 $(AEXE) : % : %.o
-	ld -nostdlib -N -e _main -o $@ $< $(LIBC)
+	ld --pic-executable -nostdlib -N -e _main -o $@ $< $(LIBC)
 
 all : $(IMAGE) $(ROOTFS)
 
