@@ -1,9 +1,10 @@
 language: c
-sudo: false
+sudo: true
 
 env:
         matrix:
                 - TEST=eduos_shell
                 - TEST=sigtest
+                - TEST=psh
 
 script : ./test/run.sh -v $TEST

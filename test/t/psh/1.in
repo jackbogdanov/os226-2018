@@ -1,0 +1,6 @@
+psh
+exit
+3 echo 3
+2 echo 2
+1 echo 1
+exit
