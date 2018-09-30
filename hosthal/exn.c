@@ -43,6 +43,9 @@ static stack_t signal_stack = {
 };
 
 static bool syscall_hnd(int exn, struct context *c, void *arg) {
+	if (exn == 40) {
+		perror("syscall_hnd");
+	}
 	ucontext_t *uc = (ucontext_t *) c;
 	greg_t *regs = uc->uc_mcontext.gregs;
 
@@ -94,6 +97,7 @@ static void TSECTION host_vm_prot(bool restore) {
 
 static void TSECTION sighnd(int sig, siginfo_t *info, void *ctx) {
 	host_vm_prot(true);
+	//exn_do(40, (struct context *) ctx);
 	exn_do(sig, (struct context *) ctx);
 	host_vm_prot(false);
 }
@@ -188,6 +192,9 @@ int exn_init(void) {
        if ((res = exn_set_hnd(SIGSEGV, syscall_hnd, NULL))) {
 	       return res;
        }
+	
+
+	
 
        struct sigaction act = {
                .sa_sigaction = sighnd,

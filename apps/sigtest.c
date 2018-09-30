@@ -20,6 +20,9 @@ void hnd(int sig) {
 }
 
 int main(int argc, char *argv[]) {
+	//rprintf("start\n");
+	//exn_set_hnd(40, hnd, NULL);
+	os_set_hnd(40, &hnd);
 	dosig();
 	rprintf("missed signal\n");
 	return 1;

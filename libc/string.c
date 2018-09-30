@@ -78,6 +78,14 @@ void *memset(void *s, int c, size_t n) {
 	return s;
 }
 
+int atoi(char *str) {
+	int num = 0;	
+	for (int i = 0; '0' <= str[i] && str[i] <= '9'; i++) {
+		num = num * 10 + (str[i] - '0');
+	}	
+	return num;
+}
+
 void *memcpy(void *dest, const void *src, size_t n) {
 	const char *e = src + n;
 	const char *s = src;

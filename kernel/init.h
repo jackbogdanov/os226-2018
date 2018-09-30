@@ -2,16 +2,13 @@
 
 #include "util.h"
 
-#define CURRENT_SIZE_PTR_OFFSET -1
-#define PREVIOUS_SIZE_PTR_OFFSET -2
+#define MAX_TASKS_IN_QUEUE 20
 
 struct kernel_globals {
 	void *rootfs_cpio;
 	void *mem;
-	void *mem_ptr;
-	size_t block_ptr;
-	size_t block_sizes[20];
 	size_t memsz;
+	char **tasks[MAX_TASKS_IN_QUEUE];
 };
 
 extern struct kernel_globals kernel_globals;

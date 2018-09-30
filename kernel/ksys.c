@@ -1,3 +1,4 @@
+
 #include <stddef.h>
 #include <stdint.h>
 #include "string.h"
@@ -11,6 +12,7 @@
 
 #include "ksys.h"
 #include "proc.h"
+#include "exn.h"
 
 struct cpio_old_hdr {
 	unsigned short   c_magic;
@@ -218,6 +220,12 @@ struct proc *current_process() {
 	return curp;
 }
 
+static bool syscall_hnd(int exn, struct context *c, void *arg) {
+	struct proc * curp = current_process();
+	ctx_save(c, &curp->savectx, arg, curp->stack, curp->stacksz);
+	return true;
+}
+
 int run_first(char *argv[]) {
 	struct proc *newp = pool_alloc(&procpool);
 	assert(newp);
@@ -253,11 +261,47 @@ failload:
 	return -1;
 }
 
-int sys_run(struct context *ctx, char *argv[], int *code) {
-	if (!argv[0]) {
-		return -1;
+int sys_set_task(struct context *ctx, char *argv[]) {
+	
+	void *note = alloc(sizeof(char) * 50);
+	memcpy(note, (void *) argv, sizeof(char) * 50);
+	for(int i = 0; i < MAX_TASKS_IN_QUEUE; i++) {
+		if (kernel_globals.tasks[i] == NULL){
+			kernel_globals.tasks[i] = (char **) note;
+			return 0;	
+		}
 	}
 
+	return -1;
+}
+
+char ** find_task_for_run() {
+	char **argv = NULL;
+	int max = -1, id = -1;
+	for(int i = 0; i < MAX_TASKS_IN_QUEUE; i++) {
+		if (kernel_globals.tasks[i] != NULL) {
+			int tprior = atoi(kernel_globals.tasks[i][0]);
+			if (max < tprior && tprior != 0){
+			max = tprior;
+			argv = (kernel_globals.tasks[i] + 1);
+			id = i;
+			}
+		}
+	}
+	
+	if (argv) {
+		//TO_DO FREE (imposible with during allocator)
+		kernel_globals.tasks[id] = NULL;
+	}
+	return argv;
+}
+
+int sys_run(struct context *ctx, int *code) {
+	char **argv = find_task_for_run(); 
+	if (!argv) {
+		return -2;
+	}
+	
 	struct proc *newp = pool_alloc(&procpool);
 	if (!newp) {
 		goto failproc;
@@ -345,3 +389,11 @@ int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
 }
+
+int sys_set_hnd(struct context *ctx, int sign, void * hnd) {
+	exn_set_hnd(sign, syscall_hnd, hnd);
+	return 0;
+}
+
+//1 echo 1; 2 echo 2; 3 echo 3; 4 echo 4;
+

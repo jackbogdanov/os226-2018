@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <kernel/syscall.h>
 
-
 int main(int argc, char *argv[]) {
 	while (1) {
 		rprintf("> ");
@@ -18,10 +17,11 @@ int main(int argc, char *argv[]) {
 		if (bytes < sizeof(buffer)) {
 			buffer[bytes] = '\0';
 		}
-
+		
 		const char *comsep = "\n;";
 		char *stcmd;
 		char *cmd = strtok_r(buffer, comsep, &stcmd);
+		
 		while (cmd) {
 			const char *argsep = " ";
 			char *starg;
@@ -37,10 +37,11 @@ int main(int argc, char *argv[]) {
 			if (!argc) {
 				break;
 			}
-
-			os_run(argv, NULL);
+			
+			os_set_task(argv);
 			cmd = strtok_r(NULL, comsep, &stcmd);
 		}
+		while (os_run(NULL) != -2);
 	}
 
 	rprintf("\n");

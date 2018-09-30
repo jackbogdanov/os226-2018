@@ -9,7 +9,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	int code = -1;
-	if (os_run(argv + 1, &code)) {
+	if (os_run(&code)) {
 		rprintf("Failed to run");
 		return 1;
 	}

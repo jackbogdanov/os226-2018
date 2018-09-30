@@ -1,6 +1,7 @@
 
 #include "util.h"
 #include "exn.h"
+#include "hal/dbg.h"
 
 #define EXN_N_MAX 64
 
@@ -10,6 +11,7 @@ static struct exndes {
 } exn_hnd_table[EXN_N_MAX];
 
 int exn_set_hnd(int exn, exn_hnd_t h, void *arg) {
+
 	if (exn < 0 || EXN_N_MAX <= exn) {
 		return -1;
 	}
@@ -28,5 +30,11 @@ void exn_do(int exn, struct context *c) {
 		return;
 	}
 
-	e->hnd(exn, c, e->arg);
+	if (e->hnd(exn, c, e->arg)) {
+		return;	
+	}
+	
+	e = &exn_hnd_table[PROGRAM_EXN_HND];
+
+	e->hnd(PROGRAM_EXN_HND, c, e->arg);
 }
