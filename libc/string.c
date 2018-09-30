@@ -98,3 +98,8 @@ int memcmp(const void *s1, const void *s2, size_t n) {
 	}
 	return 0;
 }
+
+long int strtol(const char *nptr, char **endptr, int base) {
+	// IMPL ME
+	return 0;
+}

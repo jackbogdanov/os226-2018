@@ -12,6 +12,7 @@
 
 #include "hal/dbg.h"
 #include "hostexn.h"
+#include "hosttime.h"
 
 static void *read_rootfs(const char *cpio) {
 	struct stat st;
@@ -61,5 +62,6 @@ int main(int argc, char *argv[]) {
 
 	kernel_init(rootfs, mem, memsz, "");
 	exn_init();
+	time_init();
 	kernel_start();
 }

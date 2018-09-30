@@ -347,3 +347,12 @@ int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
 	return 0;
 }
 
+int sys_sleep(struct context *ctx, int msec) {
+	// IMPL ME
+	return -1;
+}
+
+int sys_uptime(struct context *ctx) {
+	// IMPL ME
+	return -1;
+}
