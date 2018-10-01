@@ -263,6 +263,9 @@ failload:
 
 int sys_set_task(struct context *ctx, char *argv[]) {
 	
+	if (!atoi(argv[0])) {
+		return 0;
+	}
 	void *note = alloc(sizeof(char) * 50);
 	memcpy(note, (void *) argv, sizeof(char) * 50);
 	for(int i = 0; i < MAX_TASKS_IN_QUEUE; i++) {
