@@ -1,6 +1,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "string.h"
 
 #include "init.h"
@@ -71,6 +72,7 @@ static struct proc procspace[8];
 static struct pool procpool = POOL_INITIALIZER_ARRAY(procpool, procspace);
 
 static struct proc *curp;
+static TAILQ_HEAD(schedqueue, proc) squeue = TAILQ_HEAD_INITIALIZER(squeue);
 
 static char *execbufp;
 static void allocinit() {
@@ -95,8 +97,11 @@ static void *alloc(int size) {
 }
 
 static void freeup(void *mark) {
+	// FIXME
+#if 0
 	allocinit();
 	execbufp = mark;
+#endif
 }
 
 static void *freemark(void) {
@@ -194,67 +199,88 @@ int load(char *name, void **entry, struct proc *proc) {
 	return 0;
 }
 
-#if 0
-static void tramprun(unsigned long *args) {
-	int *code = (int *) args[0];
-	char **argv = (char **) args[1];
-	int (*entry)(int, char **) = (void *) args[2];
-	void *mark = (void *) args[3];
-
-	char **ap = argv + 1;
-	while (*ap != NULL) {
-		++ap;
-	}
-
-	int r = entry(ap - argv, argv);
-	if (code) {
-		*code = r;
-	}
-
-	freeup(mark);
-}
-#endif
-
 struct proc *current_process() {
 	return curp;
 }
 
-int run_first(char *argv[]) {
-	struct proc *newp = pool_alloc(&procpool);
-	assert(newp);
-
-	newp->freemark = NULL;
-
-	void *entry;
-	if (load(argv[0], &entry, newp)) {
-		goto failload;
+static int argv_size(char **argv, int *nargv) {
+	int s = 0;
+	char **a = argv;
+	while (*a) {
+		s += strlen(*a) + 1;
+		++a;
 	}
-
-	newp->stacksz = 0x2000;
-	newp->stack = alloc(newp->stacksz);
-	if (!newp->stack) {
-		goto failstack;
-	}
-
-	newp->argv = argv;
-	newp->code = NULL;
-	newp->prev = NULL;
-	curp = newp;
-
-
-	void (*mentry)(void) = entry;
-	mentry();
-
-	hal_halt();
-	while (1);
-failstack:
-	freeup(newp->freemark);
-failload:
-	pool_free(&procpool, newp);
-	return -1;
+	*nargv = (a - argv) + 1;
+	return s + *nargv * sizeof(char*);
 }
 
-int sys_run(struct context *ctx, char *argv[], int *code) {
+static char **argv_copy(char *buf, size_t bufsz, char *argv[], int nargv) {
+	char **ra = (char**) buf;
+	char *p = buf + nargv * sizeof(char*);
+	char **a = argv;
+	while (*a) {
+		*ra = p;
+		strcpy(p, *a);
+		p += strlen(*a) + 1;
+		++ra;
+		++a;
+	}
+	*ra = NULL;
+	return (char **) buf;
+}
+
+static void sched_add(struct proc *new) {
+	TAILQ_INSERT_TAIL(&squeue, new, lentry);
+}
+
+static void sched_remove(struct proc *p) {
+	TAILQ_REMOVE(&squeue, p, lentry);
+}
+
+static struct proc *sched_next(void) {
+	return TAILQ_FIRST(&squeue);
+}
+
+static void sched_sleep(void) {
+	sched_remove(curp);
+	curp->state = SLEEPING;
+}
+
+static void sched_wake(struct proc *p) {
+	assert(p != curp);
+	p->state = READY;
+	sched_add(p);
+}
+
+void sched(void) {
+	assert(curp->state != READY);
+	if (curp->state == RUNNING) {
+		curp->state = READY;
+		sched_add(curp);
+	}
+
+	struct proc *nextp = sched_next();
+	sched_remove(nextp);
+	nextp->state = RUNNING;
+	if (curp != nextp) {
+		struct proc *old = curp;
+		struct proc *new = nextp;
+		curp = nextp;
+		ctx_switch(&old->ctx, &new->ctx);
+	}
+}
+
+int sched_init(void) {
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		return -1;
+	}
+	newp->state = RUNNING;
+	curp = newp;
+	return 0;
+}
+
+int sys_run(char *argv[]) {
 	if (!argv[0]) {
 		return -1;
 	}
@@ -263,7 +289,8 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 	if (!newp) {
 		goto failproc;
 	}
-
+	newp->parent = curp;
+	newp->state = READY;
 	newp->freemark = freemark();
 
 	void *entry;
@@ -271,20 +298,22 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 		goto failload;
 	}
 
-	struct proc *oldp = curp;
 	newp->stacksz = 0x2000;
 	newp->stack = alloc(newp->stacksz);
 	if (!newp->stack) {
 		goto failstack;
 	}
 
-	newp->argv = argv;
-	newp->code = code;
-	ctx_save(ctx, &oldp->savectx, entry, newp->stack, newp->stacksz);
-	newp->prev = oldp;
-	curp = newp;
+	int nargv;
+	int asize = argv_size(argv, &nargv);
+	newp->argvb = alloc(align(asize, 0xfff));
+	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
+	newp->nargv = nargv;
 
-	return 0;
+	ctx_make(&newp->ctx, entry, newp->stack, newp->stacksz);
+	sched_add(newp);
+	return newp - procspace;
+
 failstack:
 	freeup(newp->freemark);
 failload:
@@ -293,11 +322,11 @@ failproc:
 	return -1;
 }
 
-int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argvsz) {
+int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
 	int argc = 0;
 	char *bufp = buf;
 
-	for (char **arg = curp->argv; *arg; ++arg) {
+	for (char **arg = current_process()->argv; *arg; ++arg) {
 		if (argvsz < argc) {
 			return -1;
 		}
@@ -318,41 +347,51 @@ int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argv
 	return argc;
 }
 
-int sys_exit(struct context *ctx, int code) {
-	struct proc *newp = curp;
-	struct proc *oldp = newp->prev;
-
-	if (!oldp) {
+int sys_exit(int code) {
+	if (!curp->parent) {
 		// init exits
 		hal_halt();
 	}
 
-	if (newp->code) {
-		*newp->code = code;
-	}
-	ctx_restore(ctx, &oldp->savectx);
-
-	freeup(newp->freemark);
-	pool_free(&procpool, newp);
-	curp = oldp;
+	curp->state = EXITED;
+	curp->code = code;
+	sched_wake(curp->parent);
+	sched_remove(curp);
+	sched();
 	return 0;
 }
 
-int sys_read(struct context *ctx, int f, void *buf, size_t sz) {
+int sys_wait(int id) {
+	if (id < 0 || ARRAY_SIZE(procspace) <= id) {
+		return -1;
+	}
+
+	struct proc *child = &procspace[id];
+	while (child->state != EXITED) {
+		sched_sleep();
+		sched();
+	}
+	int code = child->code;
+	freeup(child->freemark);
+	pool_free(&procpool, child);
+	return code;
+}
+
+int sys_read(int f, void *buf, size_t sz) {
 	return dbg_in(buf, sz);
 }
 
-int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
+int sys_write(int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
 }
 
-int sys_sleep(struct context *ctx, int msec) {
+int sys_sleep(int msec) {
 	// IMPL ME
 	return -1;
 }
 
-int sys_uptime(struct context *ctx) {
+int sys_uptime(void) {
 	// IMPL ME
 	return -1;
 }

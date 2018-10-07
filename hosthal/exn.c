@@ -35,12 +35,42 @@ struct kmmap {
 	int n;
 };
 
+struct exn_ctx {
+	unsigned long r11;
+	unsigned long r10;
+	unsigned long r9;
+	unsigned long r8;
+	unsigned long rdi;
+	unsigned long rsi;
+	unsigned long rdx;
+	unsigned long rcx;
+	unsigned long rbx;
+	unsigned long rax;
+	unsigned long target;
+	unsigned long sp;
+	unsigned long args[];
+};
+
+extern void tramptramp(void);
+
 static struct kmmap BSECTION kmmap;
 static char BSECTION stackbuf[0x5000];
 static stack_t signal_stack = {
 	.ss_sp = stackbuf,
 	.ss_size = sizeof(stackbuf),
 };
+
+static void hctx_push(greg_t *regs, unsigned long val) {
+	regs[REG_RSP] -= sizeof(unsigned long);
+	*(unsigned long *) regs[REG_RSP] = val;
+}
+
+static void syscalltramp(struct exn_ctx *ctx) {
+	ctx->rax = syscall_do(ctx->rax,
+			ctx->rbx, ctx->rcx,
+			ctx->rdx, ctx->rsi,
+			(void *) ctx->rdi);
+}
 
 static bool syscall_hnd(int exn, struct context *c, void *arg) {
 	ucontext_t *uc = (ucontext_t *) c;
@@ -49,13 +79,14 @@ static bool syscall_hnd(int exn, struct context *c, void *arg) {
 	if (0x81cd != *(uint16_t *) regs[REG_RIP]) {
 		return false;
 	}
-	regs[REG_RIP] += 2;
 
-	unsigned long ret = syscall_do(c, regs[REG_RAX],
-			regs[REG_RBX], regs[REG_RCX],
-			regs[REG_RDX], regs[REG_RSI],
-			(void *) regs[REG_RDI]);
-	regs[REG_RAX] = ret;
+	hctx_push(regs, regs[REG_RIP] + 2);
+	regs[REG_RIP] = (greg_t) tramptramp;
+	unsigned long oldsp = regs[REG_RSP];
+	regs[REG_RSP] -= 1024;
+	hctx_push(regs, oldsp);
+	hctx_push(regs, (unsigned long) syscalltramp);
+
 	return true;
 }
 
@@ -95,7 +126,7 @@ static void TSECTION host_vm_prot(bool restore) {
 static void TSECTION sighnd(int sig, siginfo_t *info, void *ctx) {
 	host_vm_prot(true);
 	exn_do(sig, (struct context *) ctx);
-	host_vm_prot(false);
+	// host_vm_prot(false); // FIXME
 }
 
 static int chprot2prot(char r, char w, char x) {

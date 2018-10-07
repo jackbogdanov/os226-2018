@@ -5,7 +5,7 @@
 
 void failed_assert(const char *cond, const char *file, int line) {
 	char msg[128];
-	int len = snprintf(msg, sizeof(msg), "assert failed %s:%s\n\t%s\n");
+	int len = snprintf(msg, sizeof(msg), "assert failed %s:%d\n\t%s\n", file, line, cond);
 	dbg_out(msg, len);
 	hal_halt();
 }

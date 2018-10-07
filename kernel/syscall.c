@@ -4,7 +4,7 @@
 #include "syscall.h"
 #include "util.h"
 
-typedef unsigned long(*sys_call_t)(struct context *ctx,
+typedef unsigned long(*sys_call_t)(
 		unsigned long arg1, unsigned long arg2,
 		unsigned long arg3, unsigned long arg4,
 		void *rest);
@@ -15,9 +15,9 @@ static const sys_call_t sys_table[] = {
 };
 #undef TABLE_LIST
 
-unsigned long syscall_do(struct context *ctx, int sysnum,
+unsigned long syscall_do(int sysnum,
 		unsigned long arg1, unsigned long arg2,
 		unsigned long arg3, unsigned long arg4,
 		void *rest) {
-	return sys_table[sysnum](ctx, arg1, arg2, arg3, arg4, rest);
+	return sys_table[sysnum](arg1, arg2, arg3, arg4, rest);
 }

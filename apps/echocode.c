@@ -8,11 +8,12 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	int code = -1;
-	if (os_run(argv + 1, &code)) {
+	int p = os_run(argv + 1);
+	if (p < 0) {
 		rprintf("Failed to run");
 		return 1;
 	}
+	int code = os_wait(p);
 
 	rprintf("Exit code: %d\n", code);
 	return 0;
