@@ -8,4 +8,6 @@ env:
                 - TEST=psh
                 - TEST=time
 
-script : ./test/run.sh -v $TEST
+script :
+        - make clean all
+        - ./test/run.sh -v $TEST

@@ -2,8 +2,6 @@
 
 . $TESTDIR/lib.sh
 
-make_eduos
-
 check() {
 	t1=`date +%s.%N`
 	"$@" | \

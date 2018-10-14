@@ -17,10 +17,6 @@ check_out2() {
 	diff -u $pat.out $pat.out.gold
 }
 
-make_eduos() {
-	make clean all
-}
-
 cd $TESTDIR/..
 
 IMAGE="./build/image ./build/rootfs.cpio"
