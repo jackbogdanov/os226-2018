@@ -35,14 +35,11 @@ void *palloc(int n) {
 void pfree(void *p, int n) {
 	struct freepage *ifp;
 	struct freepage *left = NULL;
-	if ((void*)SLIST_FIRST(&freepages) < p) {
-		SLIST_FOREACH(ifp, &freepages, entry) {
-			struct freepage *next = SLIST_NEXT(ifp, entry);
-			if (!next || (void*)p < (void*)next) {
-				left = ifp;
-				break;
-			}
+	SLIST_FOREACH(ifp, &freepages, entry) {
+		if (p < (void*)ifp) {
+			break;
 		}
+		left = ifp;
 	}
 
 	struct freepage *m;

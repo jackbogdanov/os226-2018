@@ -11,6 +11,7 @@ struct proc {
 	enum state {
 		EXITED,
 		SLEEPING,
+		SLEEP_TRANSITION,
 		READY,
 		RUNNING,
 	} state;
@@ -23,7 +24,6 @@ struct proc {
 
 	void *argvb;
 	int argvbn;
-
 	char **argv;
 	int nargv;
 };

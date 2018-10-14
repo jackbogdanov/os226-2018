@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "kernel/syscall.h"
 
 struct context;
@@ -34,4 +36,4 @@ extern int rootfs_cpio_init(void *p);
 
 extern int sched_init(void);
 
-extern void sched(void);
+extern void sched(bool voluntary);

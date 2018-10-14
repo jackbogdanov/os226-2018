@@ -49,7 +49,8 @@ struct exn_ctx {
 	unsigned long rax;
 	unsigned long target;
 	unsigned long sp;
-	unsigned long args[];
+	unsigned long exn;
+	unsigned long rip;
 };
 
 extern void tramptramp(void);
@@ -61,32 +62,29 @@ static stack_t signal_stack = {
 	.ss_size = sizeof(stackbuf),
 };
 
+static sigset_t irqsig;
+
 static void hctx_push(greg_t *regs, unsigned long val) {
 	regs[REG_RSP] -= sizeof(unsigned long);
 	*(unsigned long *) regs[REG_RSP] = val;
 }
 
-static void syscalltramp(struct exn_ctx *ctx) {
+static void exntramp(struct exn_ctx *ctx) {
+	exn_do(ctx->exn, (struct context *) ctx);
+}
+
+static bool syscall_hnd(int exn, struct context *_ctx, void *arg) {
+	struct exn_ctx *ctx = (struct exn_ctx *) _ctx;
+
+	if (0x81cd != *(uint16_t *) ctx->rip) {
+		return false;
+	}
+
+	ctx->rip += 2;
 	ctx->rax = syscall_do(ctx->rax,
 			ctx->rbx, ctx->rcx,
 			ctx->rdx, ctx->rsi,
 			(void *) ctx->rdi);
-}
-
-static bool syscall_hnd(int exn, struct context *c, void *arg) {
-	ucontext_t *uc = (ucontext_t *) c;
-	greg_t *regs = uc->uc_mcontext.gregs;
-
-	if (0x81cd != *(uint16_t *) regs[REG_RIP]) {
-		return false;
-	}
-
-	hctx_push(regs, regs[REG_RIP] + 2);
-	regs[REG_RIP] = (greg_t) tramptramp;
-	unsigned long oldsp = regs[REG_RSP];
-	regs[REG_RSP] -= 1024;
-	hctx_push(regs, oldsp);
-	hctx_push(regs, (unsigned long) syscalltramp);
 
 	return true;
 }
@@ -126,7 +124,17 @@ static void TSECTION host_vm_prot(bool restore) {
 
 static void TSECTION sighnd(int sig, siginfo_t *info, void *ctx) {
 	host_vm_prot(true);
-	exn_do(sig, (struct context *) ctx);
+
+	ucontext_t *uc = (ucontext_t *) ctx;
+	greg_t *regs = uc->uc_mcontext.gregs;
+
+	hctx_push(regs, regs[REG_RIP]);
+	regs[REG_RIP] = (greg_t) tramptramp;
+	unsigned long oldsp = regs[REG_RSP];
+	hctx_push(regs, sig);
+	hctx_push(regs, oldsp);
+	hctx_push(regs, (unsigned long) exntramp);
+
 	// host_vm_prot(false); // FIXME
 }
 
@@ -205,6 +213,18 @@ int host_vm_init(void *mem, size_t memsz) {
 	return 0;
 }
 
+bool irq_save(void) {
+	sigset_t old;
+	sigprocmask(SIG_BLOCK, &irqsig, &old);
+	return sigismember(&old, SIGALRM); // Any signal
+}
+
+void irq_restore(bool v) {
+	if (v) {
+		sigprocmask(SIG_UNBLOCK, &irqsig, NULL);
+	}
+}
+
 int exn_init(void) {
        int res;
 
@@ -221,7 +241,7 @@ int exn_init(void) {
                .sa_sigaction = sighnd,
                .sa_flags = SA_RESTART | SA_ONSTACK,
        };
-       sigemptyset(&act.sa_mask);
+       sigfillset(&act.sa_mask);
        for (int i = 1; i < 32; ++i) {
                if (i == SIGKILL || i == SIGSTOP) {
                        continue;

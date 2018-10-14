@@ -12,6 +12,7 @@
 #include "hal/context.h"
 #include "hal_context.h"
 #include "hal/dbg.h"
+#include "hal/exn.h"
 
 #include "ksys.h"
 #include "proc.h"
@@ -78,6 +79,8 @@ static struct pool procpool = POOL_INITIALIZER_ARRAY(procpool, procspace);
 
 static struct proc *curp;
 static TAILQ_HEAD(schedqueue, proc) squeue = TAILQ_HEAD_INITIALIZER(squeue);
+
+static struct timer schedtimer;
 
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
 	return (const char*)ch + sizeof(struct cpio_old_hdr);
@@ -219,33 +222,50 @@ static struct proc *sched_next(void) {
 	return TAILQ_FIRST(&squeue);
 }
 
-static void sched_sleep(void) {
-	sched_remove(curp);
-	curp->state = SLEEPING;
-}
-
 static void sched_wake(struct proc *p) {
+	bool irq = irq_save();
 	assert(p != curp);
 	p->state = READY;
 	sched_add(p);
+	irq_restore(irq);
 }
 
-void sched(void) {
+void sched(bool voluntary) {
 	assert(curp->state != READY);
+
+	bool irq = irq_save();
+
+	timer_stop(&schedtimer);
+
 	if (curp->state == RUNNING) {
 		curp->state = READY;
+	}
+
+	if (!voluntary && curp->state == SLEEPING) {
+		curp->state = READY;
+	}
+
+	if (curp->state == READY) {
 		sched_add(curp);
 	}
 
 	struct proc *nextp = sched_next();
 	sched_remove(nextp);
 	nextp->state = RUNNING;
+	timer_start(&schedtimer);
+
 	if (curp != nextp) {
 		struct proc *old = curp;
 		struct proc *new = nextp;
 		curp = nextp;
 		ctx_switch(&old->ctx, &new->ctx);
 	}
+
+	irq_restore(irq);
+}
+
+static void dopreempt(void *arg) {
+	sched(false);
 }
 
 int sched_init(void) {
@@ -255,6 +275,10 @@ int sched_init(void) {
 	}
 	newp->state = RUNNING;
 	curp = newp;
+
+	timer_init(&schedtimer, 100, false, dopreempt, NULL);
+	timer_start(&schedtimer);
+
 	return 0;
 }
 
@@ -289,7 +313,10 @@ int sys_run(char *argv[]) {
 	newp->nargv = nargv;
 
 	ctx_make(&newp->ctx, entry, newp->stack, PSIZE * newp->stackn);
+	bool irq = irq_save();
 	sched_add(newp);
+	irq_restore(irq);
+
 	return newp - procspace;
 
 failstack:
@@ -335,7 +362,7 @@ int sys_exit(int code) {
 	curp->code = code;
 	sched_wake(curp->parent);
 	sched_remove(curp);
-	sched();
+	sched(true);
 	return 0;
 }
 
@@ -345,12 +372,14 @@ int sys_wait(int id) {
 	}
 
 	struct proc *child = &procspace[id];
+	curp->state = SLEEPING;
 	while (child->state != EXITED) {
-		sched_sleep();
-		sched();
+		sched(true);
+		curp->state = SLEEPING;
 	}
-	int code = child->code;
+	curp->state = RUNNING;
 
+	int code = child->code;
 	pfree(child->argvb, child->argvbn);
 	pfree(child->stack, child->stackn);
 	unload(child);
