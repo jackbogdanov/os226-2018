@@ -15,13 +15,15 @@ struct proc {
 		RUNNING,
 	} state;
 
-	void *freemark;
 	void *load;
-	int loadsz;
-	void *stack;
-	int stacksz;
+	int loadn;
 
-	char *argvb;
+	void *stack;
+	int stackn;
+
+	void *argvb;
+	int argvbn;
+
 	char **argv;
 	int nargv;
 };

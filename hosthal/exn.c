@@ -13,6 +13,7 @@
 #include "util.h"
 #include "init.h"
 #include "exn.h"
+#include "palloc.h"
 
 #include "hostexn.h"
 
@@ -108,9 +109,9 @@ static void TSECTION host_vm_prot(bool restore) {
 	if (!restore) {
 		struct proc *curp = current_process();
 		load = curp->load;
-		loadsz = curp->loadsz;
+		loadsz = PSIZE * curp->loadn;
 		stack = curp->stack;
-		stacksz = curp->stacksz;
+		stacksz = PSIZE * curp->stackn;
 	}
 
 	for (struct mmapent *e = kmmap.procmaps; e < kmmap.procmaps + ARRAY_SIZE(kmmap.procmaps); ++e) {
@@ -149,7 +150,7 @@ static bool add_procmap(unsigned long from, unsigned long to, int prot) {
 	return true;
 }
 
-static int host_vm_init(void) {
+int host_vm_init(void *mem, size_t memsz) {
 	extern char host_vm_text_start, host_vm_text_end, host_vm_bss_start, host_vm_bss_end;
 	struct {
 		unsigned long from;
@@ -157,7 +158,7 @@ static int host_vm_init(void) {
 	} prothole[] = {
 		{ (unsigned long) &host_vm_text_start, (unsigned long) &host_vm_text_end },
 		{ (unsigned long) &host_vm_bss_start,  (unsigned long) &host_vm_bss_end },
-		{ (unsigned long) kernel_globals.mem,  (unsigned long) ((char *) kernel_globals.mem + kernel_globals.memsz) },
+		{ (unsigned long) mem,                 (unsigned long) ((char*)mem + memsz) },
 	};
 
 	bool ok = true;
@@ -206,10 +207,6 @@ static int host_vm_init(void) {
 
 int exn_init(void) {
        int res;
-
-       if ((res = host_vm_init())) {
-	       return res;
-       }
 
        if (sigaltstack(&signal_stack, NULL)) {
 	       perror("sigaltstack");

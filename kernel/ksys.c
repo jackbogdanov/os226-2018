@@ -6,6 +6,7 @@
 
 #include "init.h"
 #include "pool.h"
+#include "palloc.h"
 #include "kernel/util.h"
 #include "hal/context.h"
 #include "hal_context.h"
@@ -68,46 +69,13 @@ typedef struct {
 	Elf64_Xword p_align;
 } Elf64_Phdr;
 
+static void *rootfs_cpio;
+
 static struct proc procspace[8];
 static struct pool procpool = POOL_INITIALIZER_ARRAY(procpool, procspace);
 
 static struct proc *curp;
 static TAILQ_HEAD(schedqueue, proc) squeue = TAILQ_HEAD_INITIALIZER(squeue);
-
-static char *execbufp;
-static void allocinit() {
-	if (!execbufp) {
-		execbufp = kernel_globals.mem;
-	}
-}
-
-static void *alloc(int size) {
-	const size_t execbufsz = kernel_globals.memsz;
-	char *const execbuf = kernel_globals.mem;
-
-	allocinit();
-
-	if (execbuf + execbufsz - execbufp < size) {
-		return NULL;
-	}
-
-	char *curexecbuf = execbufp;
-	execbufp += size;
-	return curexecbuf;
-}
-
-static void freeup(void *mark) {
-	// FIXME
-#if 0
-	allocinit();
-	execbufp = mark;
-#endif
-}
-
-static void *freemark(void) {
-	allocinit();
-	return execbufp;
-}
 
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
 	return (const char*)ch + sizeof(struct cpio_old_hdr);
@@ -136,8 +104,13 @@ static unsigned int cpio_rminor(const struct cpio_old_hdr *ch) {
 }
 #endif
 
+int rootfs_cpio_init(void *p) {
+	rootfs_cpio = p;
+	return 0;
+}
+
 static const struct cpio_old_hdr *find_exe(char *name) {
-	const struct cpio_old_hdr *start = kernel_globals.rootfs_cpio;
+	const struct cpio_old_hdr *start = rootfs_cpio;
 	const struct cpio_old_hdr *found = NULL;
 
 	const struct cpio_old_hdr *cph = start;
@@ -151,7 +124,7 @@ static const struct cpio_old_hdr *find_exe(char *name) {
 	return found;
 }
 
-int load(char *name, void **entry, struct proc *proc) {
+static int load(char *name, void **entry, struct proc *proc) {
 	const struct cpio_old_hdr *ch = find_exe(name);
 	if (!ch) {
 		return -1;
@@ -188,15 +161,18 @@ int load(char *name, void **entry, struct proc *proc) {
 		return -1;
 	}
 
-	const int loadsz = align(loadhdr->p_memsz, 0xfff);
-	char *loadp = alloc(loadsz);
-	memset(loadp, 0, loadhdr->p_memsz);
-	memcpy(loadp, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
+	proc->loadn = psize(loadhdr->p_memsz);
+	proc->load = palloc(proc->loadn);
 
-	*entry = loadp + ehdr->e_entry - loadhdr->p_vaddr;
-	proc->load = loadp;
-	proc->loadsz = loadsz;
+	memset(proc->load, 0, loadhdr->p_memsz);
+	memcpy(proc->load, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
+
+	*entry = proc->load + ehdr->e_entry - loadhdr->p_vaddr;
 	return 0;
+}
+
+static void unload(struct proc *proc) {
+	pfree(proc->load, proc->loadn);
 }
 
 struct proc *current_process() {
@@ -214,8 +190,8 @@ static int argv_size(char **argv, int *nargv) {
 	return s + *nargv * sizeof(char*);
 }
 
-static char **argv_copy(char *buf, size_t bufsz, char *argv[], int nargv) {
-	char **ra = (char**) buf;
+static char **argv_copy(void *buf, size_t bufsz, char *argv[], int nargv) {
+	char **ra = buf;
 	char *p = buf + nargv * sizeof(char*);
 	char **a = argv;
 	while (*a) {
@@ -291,31 +267,31 @@ int sys_run(char *argv[]) {
 	}
 	newp->parent = curp;
 	newp->state = READY;
-	newp->freemark = freemark();
 
 	void *entry;
 	if (load(argv[0], &entry, newp)) {
 		goto failload;
 	}
 
-	newp->stacksz = 0x2000;
-	newp->stack = alloc(newp->stacksz);
+	newp->stackn = 2;
+	newp->stack = palloc(newp->stackn);
 	if (!newp->stack) {
 		goto failstack;
 	}
 
 	int nargv;
 	int asize = argv_size(argv, &nargv);
-	newp->argvb = alloc(align(asize, 0xfff));
+	newp->argvbn = psize(asize);
+	newp->argvb = palloc(newp->argvbn);
 	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
 	newp->nargv = nargv;
 
-	ctx_make(&newp->ctx, entry, newp->stack, newp->stacksz);
+	ctx_make(&newp->ctx, entry, newp->stack, PSIZE * newp->stackn);
 	sched_add(newp);
 	return newp - procspace;
 
 failstack:
-	freeup(newp->freemark);
+	unload(newp);
 failload:
 	pool_free(&procpool, newp);
 failproc:
@@ -372,7 +348,10 @@ int sys_wait(int id) {
 		sched();
 	}
 	int code = child->code;
-	freeup(child->freemark);
+
+	pfree(child->argvb, child->argvbn);
+	pfree(child->stack, child->stackn);
+	unload(child);
 	pool_free(&procpool, child);
 	return code;
 }

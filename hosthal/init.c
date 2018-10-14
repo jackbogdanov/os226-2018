@@ -61,7 +61,20 @@ int main(int argc, char *argv[]) {
 	}
 
 	kernel_init(rootfs, mem, memsz, "");
-	exn_init();
-	time_init();
+
+	if (host_vm_init(mem, memsz)) {
+		fprintf(stderr, "host_vm_init failed\n");
+		return 1;
+	}
+
+	if (exn_init()) {
+		fprintf(stderr, "exn_init failed\n");
+		return 1;
+	}
+
+	if (time_init()) {
+		fprintf(stderr, "time_init failed\n");
+		return 1;
+	}
 	kernel_start();
 }

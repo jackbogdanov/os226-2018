@@ -30,6 +30,8 @@ SYSCALL_XN(DECLARE)
 #undef DECLARE
 #undef DO_DECLARE
 
+extern int rootfs_cpio_init(void *p);
+
 extern int sched_init(void);
 
 extern void sched(void);

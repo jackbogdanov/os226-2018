@@ -3,15 +3,21 @@
 #include <stdbool.h>
 
 #include "init.h"
+#include "palloc.h"
 #include "hal/dbg.h"
 #include "ksys.h"
 
-struct kernel_globals kernel_globals;
+int kernel_init(void *rootfs_cpio, void *mem, size_t sz, const char* args) {
+	int r;
+	if ((r = rootfs_cpio_init(rootfs_cpio))) {
+		return r;
+	}
 
-void kernel_init(void *rootfs_cpio, void *mem, size_t sz, const char* args) {
-	kernel_globals.rootfs_cpio = rootfs_cpio;
-	kernel_globals.mem = mem;
-	kernel_globals.memsz = sz;
+	if ((r = palloc_init(mem, sz))) {
+		return r;
+	}
+
+	return 0;
 }
 
 void kernel_start(void) {
