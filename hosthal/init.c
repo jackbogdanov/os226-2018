@@ -12,7 +12,6 @@
 
 #include "hal/dbg.h"
 #include "hostexn.h"
-#include "hosttime.h"
 
 static void *read_rootfs(const char *cpio) {
 	struct stat st;
@@ -72,9 +71,5 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	if (time_init()) {
-		fprintf(stderr, "time_init failed\n");
-		return 1;
-	}
 	kernel_start();
 }

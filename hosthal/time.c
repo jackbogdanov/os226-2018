@@ -6,24 +6,13 @@
 #include <assert.h>
 
 #include "exn.h"
-#include "hosttime.h"
 
-static bool timer_hnd(int exn, struct context *c, void *arg) {
-	// IMPL ME
-	return true;
-}
+static struct timeval initv;
 
-int time_init(void) {
-	int res;
+int hal_timer_init(int msec, bool reload, exn_hnd_t hnd, void *arg) {
+	initv.tv_sec  = msec / 1000;
+	initv.tv_usec = msec * 1000;
 
-	if ((res = exn_set_hnd(SIGALRM, timer_hnd, NULL))) {
-		return res;
-	}
-
-	const struct timeval initv = {
-		.tv_sec  = 1,
-		.tv_usec = 0,
-	};
 	const struct itimerval setup_it = {
 		.it_value    = initv,
 		.it_interval = initv,
@@ -32,5 +21,13 @@ int time_init(void) {
 		perror("SIGALRM set failed");
 		return -1;
 	}
-	return 0;
+
+	return exn_set_hnd(SIGALRM, hnd, arg);
+}
+
+int hal_timer_counter(void) {
+        struct itimerval it;
+        getitimer(ITIMER_REAL, &it);
+        return 1000000 * (initv.tv_sec - it.it_value.tv_sec)
+		+ (initv.tv_usec - it.it_value.tv_usec);
 }

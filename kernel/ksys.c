@@ -7,6 +7,7 @@
 #include "init.h"
 #include "pool.h"
 #include "palloc.h"
+#include "time.h"
 #include "kernel/util.h"
 #include "hal/context.h"
 #include "hal_context.h"
@@ -14,6 +15,7 @@
 
 #include "ksys.h"
 #include "proc.h"
+
 
 struct cpio_old_hdr {
 	unsigned short   c_magic;
@@ -366,11 +368,12 @@ int sys_write(int f, const void *buf, size_t sz) {
 }
 
 int sys_sleep(int msec) {
-	// IMPL ME
-	return -1;
+	int till = 1000 * msec + time_current();
+	while (time_current() < till) {
+	}
+	return 0;
 }
 
 int sys_uptime(void) {
-	// IMPL ME
-	return -1;
+	return time_current();
 }

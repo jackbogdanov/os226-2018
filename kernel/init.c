@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "init.h"
+#include "time.h"
 #include "palloc.h"
 #include "hal/dbg.h"
 #include "ksys.h"
@@ -21,6 +22,9 @@ int kernel_init(void *rootfs_cpio, void *mem, size_t sz, const char* args) {
 }
 
 void kernel_start(void) {
+	if (time_init()) {
+		panic("time failed");
+	}
 
 	char *argv[] = { "shell", NULL };
 	if (sys_run(argv) < 0) {
