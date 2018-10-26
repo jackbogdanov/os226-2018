@@ -11,6 +11,8 @@ typedef void (*tramp_t)(void *arg);
 	x(exit, int, 1, int, exitcode) \
 	x(write, int, 3, int, fd, const void *, buf, size_t, len) \
 	x(read, int, 3, int, fd, void *, buffer, size_t, size) \
+	x(sem_up, int, 1, int, id) \
+	x(sem_down, int, 1, int, id) \
 	x(sleep, int, 1, int, msec) \
 	x(uptime, int, 0) \
 

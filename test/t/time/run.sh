@@ -14,4 +14,4 @@ check() {
 	[ $r1 = 0 ] && [ $r2 = 0 ]
 }
 
-check $IMAGE < $CDIR/1.in
+check timeout -s 9 10 $IMAGE < $CDIR/1.in

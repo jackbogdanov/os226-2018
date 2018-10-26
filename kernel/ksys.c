@@ -396,9 +396,25 @@ int sys_write(int f, const void *buf, size_t sz) {
 	return 0;
 }
 
+int sys_sem_up(int id) {
+	sched(true);
+	return -1;
+}
+
+int sys_sem_down(int id) {
+	sched(true);
+	return -1;
+}
+
 int sys_sleep(int msec) {
+	if (msec == 0) {
+		sched(true);
+		return 0;
+	}
+
 	int till = 1000 * msec + time_current();
 	while (time_current() < till) {
+		/*sched(true);*/
 	}
 	return 0;
 }

@@ -10,6 +10,8 @@
 static struct timeval initv;
 
 int hal_timer_init(int msec, bool reload, exn_hnd_t hnd, void *arg) {
+	return 0; // FIXME
+
 	initv.tv_sec  = msec / 1000;
 	initv.tv_usec = msec * 1000;
 
