@@ -5,11 +5,10 @@
 check() {
 	t1=`date +%s.%N`
 	"$@" | \
-		awk 'NR == 1 { l = $2 } NR == 2 { if ($1 - l >= 2.0) print "OK" }' | \
-		grep "OK"
+		awk 'NR == 1 { l = $2 } NR == 2 { exit(($1 - l >= 2000000) ? 0 : 1) }'
 	r1=$?
 	t2=`date +%s.%N`
-	echo "$t1 $t2" | awk '{if ($2-$1 >= 2.0) print "OK"}' | grep "OK"
+	echo "$t1 $t2" | awk '{ exit(($2 - $1 >= 2.0) ? 0 : 1) }'
 	r2=$?
 	[ $r1 = 0 ] && [ $r2 = 0 ]
 }
