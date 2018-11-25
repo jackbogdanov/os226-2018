@@ -81,6 +81,13 @@ static TAILQ_HEAD(schedqueue, proc) squeue = TAILQ_HEAD_INITIALIZER(squeue);
 static bool sched_posted;
 static struct timer schedtimer;
 
+struct sem {
+	int cnt;
+};
+
+struct sem sems[1];
+struct pool sempool = POOL_INITIALIZER_ARRAY(sempool, sems);
+
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
 	return (const char*)ch + sizeof(struct cpio_old_hdr);
 }
@@ -426,14 +433,47 @@ int sys_write(int f, const void *buf, size_t sz) {
 	return 0;
 }
 
+int sys_sem_alloc(int cnt) {
+	bool irq = irq_save();
+	struct sem *s = pool_alloc(&sempool);
+	irq_restore(irq);
+
+	if (!s) {
+		return -1;
+	}
+	s->cnt = cnt;
+	return s - sems;
+}
+
 int sys_sem_up(int id) {
-	sched(true);
+	bool irq = irq_save();
+	++sems[id].cnt;
+	// TODO ping waiters
+	irq_restore(irq);
 	return -1;
 }
 
 int sys_sem_down(int id) {
-	sched(true);
-	return -1;
+	struct sem *s = &sems[id];
+	bool irq = irq_save();
+	if (s->cnt) {
+		--s->cnt;
+		goto out;
+	}
+
+	while (1) {
+		irq_restore(irq);
+		// TODO sleep
+		sched(true);
+		irq = irq_save();
+		if (s->cnt) {
+			--s->cnt;
+			break;
+		}
+	}
+out:
+	irq_restore(irq);
+	return 0;
 }
 
 int sys_sleep(int msec) {
