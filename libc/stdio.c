@@ -68,6 +68,28 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
 				os = b + sizeof(b) - o;
 				break;
 			}
+			case 'p': {
+				char *p = b + sizeof(b) - 1;
+				unsigned long d = (unsigned long) va_arg(ap, void *);
+				if (!d) {
+					*p-- = '0';
+				} else {
+					while (d && p != b) {
+						int v = d % 16;
+						if (v < 10) {
+							*p-- = '0' + v;
+						} else {
+							*p-- = 'a' + v - 10;
+						}
+						d /= 16;
+					}
+				}
+				*p-- = 'x';
+				*p = '0';
+				o = p;
+				os = b + sizeof(b) - o;
+				break;
+			}
 			case 'c':
 				b[0] = (char) va_arg(ap, int);
 				o = b;
