@@ -1,6 +1,11 @@
 #pragma once
 
-#define HOST_UCTX_SZ 0x10000
 struct uctx {
-       char host_uctx[HOST_UCTX_SZ];
+	unsigned long rbx;
+	unsigned long r12;
+	unsigned long r13;
+	unsigned long r14;
+	unsigned long r15;
+	unsigned long rsp;
+	unsigned long rbp;
 };

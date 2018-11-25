@@ -17,6 +17,11 @@
 
 #include "hostexn.h"
 
+/* AMD64 Sys V ABI, 3.2.2 The Stack Frame:
+The 128-byte area beyond the location pointed to by %rsp is considered to
+be reserved and shall not be modified by signal or interrupt handlers */
+#define SYSV_REDST_SZ 128
+
 #define SECTION(x) __attribute__((section(# x)))
 #define ALIGN(x) __attribute__((aligned(x)))
 
@@ -37,6 +42,10 @@ struct kmmap {
 };
 
 struct exn_ctx {
+	unsigned long r15;
+	unsigned long r14;
+	unsigned long r13;
+	unsigned long r12;
 	unsigned long r11;
 	unsigned long r10;
 	unsigned long r9;
@@ -47,6 +56,7 @@ struct exn_ctx {
 	unsigned long rcx;
 	unsigned long rbx;
 	unsigned long rax;
+	unsigned long rflags;
 	unsigned long target;
 	unsigned long sp;
 	unsigned long exn;
@@ -128,12 +138,13 @@ static void TSECTION sighnd(int sig, siginfo_t *info, void *ctx) {
 	ucontext_t *uc = (ucontext_t *) ctx;
 	greg_t *regs = uc->uc_mcontext.gregs;
 
-	hctx_push(regs, regs[REG_RIP]);
-	regs[REG_RIP] = (greg_t) tramptramp;
 	unsigned long oldsp = regs[REG_RSP];
+	regs[REG_RSP] -= SYSV_REDST_SZ;
+	hctx_push(regs, regs[REG_RIP]);
 	hctx_push(regs, sig);
 	hctx_push(regs, oldsp);
 	hctx_push(regs, (unsigned long) exntramp);
+	regs[REG_RIP] = (greg_t) tramptramp;
 
 	// host_vm_prot(false); // FIXME
 }
@@ -215,13 +226,17 @@ int host_vm_init(void *mem, size_t memsz) {
 
 bool irq_save(void) {
 	sigset_t old;
-	sigprocmask(SIG_BLOCK, &irqsig, &old);
-	return sigismember(&old, SIGALRM); // Any signal
+	if (sigprocmask(SIG_BLOCK, &irqsig, &old)) {
+		perror("cannot block irq");
+	}
+	return !sigismember(&old, SIGALRM); // Any signal
 }
 
 void irq_restore(bool v) {
 	if (v) {
-		sigprocmask(SIG_UNBLOCK, &irqsig, NULL);
+		if (sigprocmask(SIG_UNBLOCK, &irqsig, NULL)) {
+			perror("cannot unblock irq");
+		}
 	}
 }
 
@@ -242,15 +257,17 @@ int exn_init(void) {
                .sa_flags = SA_RESTART | SA_ONSTACK,
        };
        sigfillset(&act.sa_mask);
-       for (int i = 1; i < 32; ++i) {
-               if (i == SIGKILL || i == SIGSTOP) {
-                       continue;
-               }
-               if (-1 == sigaction(i, &act, NULL)) {
+       sigfillset(&irqsig);
+
+       int sigs[] = {
+	       SIGSEGV,
+	       SIGALRM,
+       };
+       for (int i = 0; i < ARRAY_SIZE(sigs); ++i) {
+               if (-1 == sigaction(sigs[i], &act, NULL)) {
                        perror("irq init failed");
                        return -1;
                }
        }
-
        return 0;
 }

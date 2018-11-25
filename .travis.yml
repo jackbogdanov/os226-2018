@@ -4,11 +4,12 @@ sudo: true
 env:
         matrix:
                 - TEST=eduos_shell
+                - TEST=time
                 - TEST=sem
+                - TEST=preempt
                 #- TEST=psh
                 #- TEST=sigtest
                 #- TEST=psh
-                #- TEST=time
 
 script :
         - make clean all

@@ -17,7 +17,6 @@
 #include "ksys.h"
 #include "proc.h"
 
-
 struct cpio_old_hdr {
 	unsigned short   c_magic;
 	unsigned short   c_dev;
@@ -79,7 +78,7 @@ static struct pool procpool = POOL_INITIALIZER_ARRAY(procpool, procspace);
 
 static struct proc *curp;
 static TAILQ_HEAD(schedqueue, proc) squeue = TAILQ_HEAD_INITIALIZER(squeue);
-
+static bool sched_posted;
 static struct timer schedtimer;
 
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
@@ -211,11 +210,15 @@ static char **argv_copy(void *buf, size_t bufsz, char *argv[], int nargv) {
 }
 
 static void sched_add(struct proc *new) {
+	assert(!new->inqueue);
 	TAILQ_INSERT_TAIL(&squeue, new, lentry);
+	new->inqueue = true;
 }
 
 static void sched_remove(struct proc *p) {
+	assert(p->inqueue);
 	TAILQ_REMOVE(&squeue, p, lentry);
+	p->inqueue = false;
 }
 
 static struct proc *sched_next(void) {
@@ -224,34 +227,40 @@ static struct proc *sched_next(void) {
 
 static void sched_wake(struct proc *p) {
 	bool irq = irq_save();
-	assert(p != curp);
-	p->state = READY;
-	sched_add(p);
+	if (!p->inqueue) {
+		sched_add(p);
+	}
+	if (p->sleep) {
+		p->sleep = false;
+	}
 	irq_restore(irq);
 }
 
 void sched(bool voluntary) {
-	assert(curp->state != READY);
-
 	bool irq = irq_save();
+
+	assert(!curp->inqueue);
 
 	timer_stop(&schedtimer);
 
-	if (curp->state == RUNNING) {
-		curp->state = READY;
-	}
-
-	if (!voluntary && curp->state == SLEEPING) {
-		curp->state = READY;
-	}
-
-	if (curp->state == READY) {
+	if (!curp->sleep || !voluntary) {
 		sched_add(curp);
 	}
 
+#if 0
+	kprint("P %d %p %d %p ", curp - procspace, curp->stack, curp->stackn, curp->ctx.rsp);
+	struct proc *ip;
+	kprint("Q%d:", (int)voluntary);
+	TAILQ_FOREACH(ip, &squeue, lentry) {
+		kprint(" %d", ip - procspace);
+	}
+	kprint("\n");
+#endif
+
 	struct proc *nextp = sched_next();
+	assert(nextp);
 	sched_remove(nextp);
-	nextp->state = RUNNING;
+
 	timer_start(&schedtimer);
 
 	if (curp != nextp) {
@@ -264,8 +273,16 @@ void sched(bool voluntary) {
 	irq_restore(irq);
 }
 
-static void dopreempt(void *arg) {
-	sched(false);
+
+static void preempt_sched(void *arg) {
+	sched_posted = true;
+}
+
+void sched_handle_posted(void) {
+	if (sched_posted) {
+		sched_posted = false;
+		sched(false);
+	}
 }
 
 int sched_init(void) {
@@ -273,13 +290,20 @@ int sched_init(void) {
 	if (!newp) {
 		return -1;
 	}
-	newp->state = RUNNING;
+	newp->inqueue = false;
+	newp->sleep = false;
 	curp = newp;
 
-	timer_init(&schedtimer, 100, false, dopreempt, NULL);
+	sched_posted = false;
+	timer_init(&schedtimer, 100, false, preempt_sched, NULL);
 	timer_start(&schedtimer);
 
 	return 0;
+}
+
+void proctramp(void) {
+	irq_restore(true);
+	curp->entry();
 }
 
 int sys_run(char *argv[]) {
@@ -292,7 +316,9 @@ int sys_run(char *argv[]) {
 		goto failproc;
 	}
 	newp->parent = curp;
-	newp->state = READY;
+	newp->inqueue = false;
+	newp->sleep = false;
+	newp->exited = false;
 
 	void *entry;
 	if (load(argv[0], &entry, newp)) {
@@ -311,8 +337,9 @@ int sys_run(char *argv[]) {
 	newp->argvb = palloc(newp->argvbn);
 	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
 	newp->nargv = nargv;
+	newp->entry = entry;
 
-	ctx_make(&newp->ctx, entry, newp->stack, PSIZE * newp->stackn);
+	ctx_make(&newp->ctx, proctramp, newp->stack, PSIZE * newp->stackn);
 	bool irq = irq_save();
 	sched_add(newp);
 	irq_restore(irq);
@@ -358,11 +385,13 @@ int sys_exit(int code) {
 		hal_halt();
 	}
 
-	curp->state = EXITED;
 	curp->code = code;
+	curp->exited = true;
 	sched_wake(curp->parent);
-	sched_remove(curp);
-	sched(true);
+	while (true) {
+		curp->sleep = true;
+		sched(true);
+	}
 	return 0;
 }
 
@@ -372,13 +401,14 @@ int sys_wait(int id) {
 	}
 
 	struct proc *child = &procspace[id];
-	curp->state = SLEEPING;
-	while (child->state != EXITED) {
+	curp->sleep = true;
+	while (!child->exited) {
 		sched(true);
-		curp->state = SLEEPING;
+		curp->sleep = true;
 	}
-	curp->state = RUNNING;
+	curp->sleep = false;
 
+	assert(!child->inqueue && child->sleep);
 	int code = child->code;
 	pfree(child->argvb, child->argvbn);
 	pfree(child->stack, child->stackn);
