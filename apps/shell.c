@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <kernel/syscall.h>
 
-
 int main(int argc, char *argv[]) {
 	while (1) {
 		rprintf("> ");

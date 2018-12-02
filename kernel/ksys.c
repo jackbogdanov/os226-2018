@@ -1,3 +1,4 @@
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -491,3 +492,78 @@ int sys_sleep(int msec) {
 int sys_uptime(void) {
 	return time_current();
 }
+
+
+int sys_fork(void) {
+
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		goto failproc;
+	}
+	
+	dbg_out("inFORK\n", 7);
+	newp->parent = curp;
+	newp->inqueue = false;
+	newp->sleep = false;
+	newp->exited = false;
+
+	char **argv = (char **) curp->argv;
+	
+	argv[0][1] = '!';
+	
+	//LOADING
+	
+	newp->loadn = curp->loadn;
+	newp->load = palloc(newp->loadn);
+
+	memset(newp->load, 0, PSIZE * newp->loadn);
+	memcpy(newp->load, &curp->load, PSIZE * curp->loadn);
+
+	void *entry = curp->entry + (newp->load - curp->load + 1);
+
+	//
+	
+
+	newp->stackn = curp->stackn;
+	newp->stack = palloc(newp->stackn);
+	memcpy(newp->stack, &curp->stack, PSIZE * newp->stackn);
+
+	if (!newp->stack) {
+		goto failstack;
+	}
+
+	int nargv;
+	int asize = argv_size(argv, &nargv);
+	newp->argvbn = psize(asize);
+	newp->argvb = palloc(newp->argvbn);
+	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
+	newp->nargv = nargv;
+	newp->entry = entry;
+
+
+	//ctx_make(&newp->ctx, proctramp, newp->stack, PSIZE * newp->stackn);
+	dbg_out("before_copy\n", 12);
+	ctx_copy(&newp->ctx, &curp->ctx, newp->stack - curp->stack + 1);
+        dbg_out("after_copy\n", 11);
+	bool irq = irq_save();
+	sched_add(newp);
+	irq_restore(irq);
+
+	return newp - procspace;
+
+failstack:
+	unload(newp);
+failproc:
+	return -1;
+}
+
+
+
+
+
+
+
+
+
+
+
