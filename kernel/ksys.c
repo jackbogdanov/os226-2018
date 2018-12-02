@@ -1,13 +1,17 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "string.h"
 
 #include "init.h"
 #include "pool.h"
+#include "palloc.h"
+#include "time.h"
 #include "kernel/util.h"
 #include "hal/context.h"
 #include "hal_context.h"
 #include "hal/dbg.h"
+#include "hal/exn.h"
 
 #include "ksys.h"
 #include "proc.h"
@@ -66,42 +70,22 @@ typedef struct {
 	Elf64_Xword p_align;
 } Elf64_Phdr;
 
+static void *rootfs_cpio;
+
 static struct proc procspace[8];
 static struct pool procpool = POOL_INITIALIZER_ARRAY(procpool, procspace);
 
 static struct proc *curp;
+static TAILQ_HEAD(schedqueue, proc) squeue = TAILQ_HEAD_INITIALIZER(squeue);
+static bool sched_posted;
+static struct timer schedtimer;
 
-static char *execbufp;
-static void allocinit() {
-	if (!execbufp) {
-		execbufp = kernel_globals.mem;
-	}
-}
+struct sem {
+	int cnt;
+};
 
-static void *alloc(int size) {
-	const size_t execbufsz = kernel_globals.memsz;
-	char *const execbuf = kernel_globals.mem;
-
-	allocinit();
-
-	if (execbuf + execbufsz - execbufp < size) {
-		return NULL;
-	}
-
-	char *curexecbuf = execbufp;
-	execbufp += size;
-	return curexecbuf;
-}
-
-static void freeup(void *mark) {
-	allocinit();
-	execbufp = mark;
-}
-
-static void *freemark(void) {
-	allocinit();
-	return execbufp;
-}
+struct sem sems[1];
+struct pool sempool = POOL_INITIALIZER_ARRAY(sempool, sems);
 
 static const char *cpio_name(const struct cpio_old_hdr *ch) {
 	return (const char*)ch + sizeof(struct cpio_old_hdr);
@@ -130,8 +114,13 @@ static unsigned int cpio_rminor(const struct cpio_old_hdr *ch) {
 }
 #endif
 
+int rootfs_cpio_init(void *p) {
+	rootfs_cpio = p;
+	return 0;
+}
+
 static const struct cpio_old_hdr *find_exe(char *name) {
-	const struct cpio_old_hdr *start = kernel_globals.rootfs_cpio;
+	const struct cpio_old_hdr *start = rootfs_cpio;
 	const struct cpio_old_hdr *found = NULL;
 
 	const struct cpio_old_hdr *cph = start;
@@ -145,7 +134,7 @@ static const struct cpio_old_hdr *find_exe(char *name) {
 	return found;
 }
 
-int load(char *name, void **entry, struct proc *proc) {
+static int load(char *name, void **entry, struct proc *proc) {
 	const struct cpio_old_hdr *ch = find_exe(name);
 	if (!ch) {
 		return -1;
@@ -182,78 +171,148 @@ int load(char *name, void **entry, struct proc *proc) {
 		return -1;
 	}
 
-	const int loadsz = align(loadhdr->p_memsz, 0xfff);
-	char *loadp = alloc(loadsz);
-	memset(loadp, 0, loadhdr->p_memsz);
-	memcpy(loadp, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
+	proc->loadn = psize(loadhdr->p_memsz);
+	proc->load = palloc(proc->loadn);
 
-	*entry = loadp + ehdr->e_entry - loadhdr->p_vaddr;
-	proc->load = loadp;
-	proc->loadsz = loadsz;
+	memset(proc->load, 0, loadhdr->p_memsz);
+	memcpy(proc->load, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
+
+	*entry = proc->load + ehdr->e_entry - loadhdr->p_vaddr;
 	return 0;
 }
 
-#if 0
-static void tramprun(unsigned long *args) {
-	int *code = (int *) args[0];
-	char **argv = (char **) args[1];
-	int (*entry)(int, char **) = (void *) args[2];
-	void *mark = (void *) args[3];
-
-	char **ap = argv + 1;
-	while (*ap != NULL) {
-		++ap;
-	}
-
-	int r = entry(ap - argv, argv);
-	if (code) {
-		*code = r;
-	}
-
-	freeup(mark);
+static void unload(struct proc *proc) {
+	pfree(proc->load, proc->loadn);
 }
-#endif
 
 struct proc *current_process() {
 	return curp;
 }
 
-int run_first(char *argv[]) {
-	struct proc *newp = pool_alloc(&procpool);
-	assert(newp);
-
-	newp->freemark = NULL;
-
-	void *entry;
-	if (load(argv[0], &entry, newp)) {
-		goto failload;
+static int argv_size(char **argv, int *nargv) {
+	int s = 0;
+	char **a = argv;
+	while (*a) {
+		s += strlen(*a) + 1;
+		++a;
 	}
-
-	newp->stacksz = 0x2000;
-	newp->stack = alloc(newp->stacksz);
-	if (!newp->stack) {
-		goto failstack;
-	}
-
-	newp->argv = argv;
-	newp->code = NULL;
-	newp->prev = NULL;
-	curp = newp;
-
-
-	void (*mentry)(void) = entry;
-	mentry();
-
-	hal_halt();
-	while (1);
-failstack:
-	freeup(newp->freemark);
-failload:
-	pool_free(&procpool, newp);
-	return -1;
+	*nargv = (a - argv) + 1;
+	return s + *nargv * sizeof(char*);
 }
 
-int sys_run(struct context *ctx, char *argv[], int *code) {
+static char **argv_copy(void *buf, size_t bufsz, char *argv[], int nargv) {
+	char **ra = buf;
+	char *p = buf + nargv * sizeof(char*);
+	char **a = argv;
+	while (*a) {
+		*ra = p;
+		strcpy(p, *a);
+		p += strlen(*a) + 1;
+		++ra;
+		++a;
+	}
+	*ra = NULL;
+	return (char **) buf;
+}
+
+static void sched_add(struct proc *new) {
+	assert(!new->inqueue);
+	TAILQ_INSERT_TAIL(&squeue, new, lentry);
+	new->inqueue = true;
+}
+
+static void sched_remove(struct proc *p) {
+	assert(p->inqueue);
+	TAILQ_REMOVE(&squeue, p, lentry);
+	p->inqueue = false;
+}
+
+static struct proc *sched_next(void) {
+	return TAILQ_FIRST(&squeue);
+}
+
+static void sched_wake(struct proc *p) {
+	bool irq = irq_save();
+	if (!p->inqueue) {
+		sched_add(p);
+	}
+	if (p->sleep) {
+		p->sleep = false;
+	}
+	irq_restore(irq);
+}
+
+void sched(bool voluntary) {
+	bool irq = irq_save();
+
+	assert(!curp->inqueue);
+
+	timer_stop(&schedtimer);
+
+	if (!curp->sleep || !voluntary) {
+		sched_add(curp);
+	}
+
+#if 0
+	kprint("P %d %p %d %p ", curp - procspace, curp->stack, curp->stackn, curp->ctx.rsp);
+	struct proc *ip;
+	kprint("Q%d:", (int)voluntary);
+	TAILQ_FOREACH(ip, &squeue, lentry) {
+		kprint(" %d", ip - procspace);
+	}
+	kprint("\n");
+#endif
+
+	struct proc *nextp = sched_next();
+	assert(nextp);
+	sched_remove(nextp);
+
+	timer_start(&schedtimer);
+
+	if (curp != nextp) {
+		struct proc *old = curp;
+		struct proc *new = nextp;
+		curp = nextp;
+		ctx_switch(&old->ctx, &new->ctx);
+	}
+
+	irq_restore(irq);
+}
+
+
+static void preempt_sched(void *arg) {
+	sched_posted = true;
+}
+
+void sched_handle_posted(void) {
+	if (sched_posted) {
+		sched_posted = false;
+		sched(false);
+	}
+}
+
+int sched_init(void) {
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		return -1;
+	}
+	newp->inqueue = false;
+	newp->sleep = false;
+	curp = newp;
+
+	sched_posted = false;
+	timer_init(&schedtimer, 100, false, preempt_sched, NULL);
+	timer_start(&schedtimer);
+
+	return 0;
+}
+
+void proctramp(void) {
+	irq_restore(true);
+	curp->entry();
+}
+
+int sys_run(char *argv[]) {
 	if (!argv[0]) {
 		return -1;
 	}
@@ -262,41 +321,50 @@ int sys_run(struct context *ctx, char *argv[], int *code) {
 	if (!newp) {
 		goto failproc;
 	}
-
-	newp->freemark = freemark();
+	newp->parent = curp;
+	newp->inqueue = false;
+	newp->sleep = false;
+	newp->exited = false;
 
 	void *entry;
 	if (load(argv[0], &entry, newp)) {
 		goto failload;
 	}
 
-	struct proc *oldp = curp;
-	newp->stacksz = 0x2000;
-	newp->stack = alloc(newp->stacksz);
+	newp->stackn = 2;
+	newp->stack = palloc(newp->stackn);
 	if (!newp->stack) {
 		goto failstack;
 	}
 
-	newp->argv = argv;
-	newp->code = code;
-	ctx_save(ctx, &oldp->savectx, entry, newp->stack, newp->stacksz);
-	newp->prev = oldp;
-	curp = newp;
+	int nargv;
+	int asize = argv_size(argv, &nargv);
+	newp->argvbn = psize(asize);
+	newp->argvb = palloc(newp->argvbn);
+	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
+	newp->nargv = nargv;
+	newp->entry = entry;
 
-	return 0;
+	ctx_make(&newp->ctx, proctramp, newp->stack, PSIZE * newp->stackn);
+	bool irq = irq_save();
+	sched_add(newp);
+	irq_restore(irq);
+
+	return newp - procspace;
+
 failstack:
-	freeup(newp->freemark);
+	unload(newp);
 failload:
 	pool_free(&procpool, newp);
 failproc:
 	return -1;
 }
 
-int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argvsz) {
+int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
 	int argc = 0;
 	char *bufp = buf;
 
-	for (char **arg = curp->argv; *arg; ++arg) {
+	for (char **arg = current_process()->argv; *arg; ++arg) {
 		if (argvsz < argc) {
 			return -1;
 		}
@@ -317,31 +385,109 @@ int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argv
 	return argc;
 }
 
-int sys_exit(struct context *ctx, int code) {
-	struct proc *newp = curp;
-	struct proc *oldp = newp->prev;
-
-	if (!oldp) {
+int sys_exit(int code) {
+	if (!curp->parent) {
 		// init exits
 		hal_halt();
 	}
 
-	if (newp->code) {
-		*newp->code = code;
+	curp->code = code;
+	curp->exited = true;
+	sched_wake(curp->parent);
+	while (true) {
+		curp->sleep = true;
+		sched(true);
 	}
-	ctx_restore(ctx, &oldp->savectx);
-
-	freeup(newp->freemark);
-	pool_free(&procpool, newp);
-	curp = oldp;
 	return 0;
 }
 
-int sys_read(struct context *ctx, int f, void *buf, size_t sz) {
+int sys_wait(int id) {
+	if (id < 0 || ARRAY_SIZE(procspace) <= id) {
+		return -1;
+	}
+
+	struct proc *child = &procspace[id];
+	curp->sleep = true;
+	while (!child->exited) {
+		sched(true);
+		curp->sleep = true;
+	}
+	curp->sleep = false;
+
+	assert(!child->inqueue && child->sleep);
+	int code = child->code;
+	pfree(child->argvb, child->argvbn);
+	pfree(child->stack, child->stackn);
+	unload(child);
+	pool_free(&procpool, child);
+	return code;
+}
+
+int sys_read(int f, void *buf, size_t sz) {
 	return dbg_in(buf, sz);
 }
 
-int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
+int sys_write(int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
+}
+
+int sys_sem_alloc(int cnt) {
+	bool irq = irq_save();
+	struct sem *s = pool_alloc(&sempool);
+	irq_restore(irq);
+
+	if (!s) {
+		return -1;
+	}
+	s->cnt = cnt;
+	return s - sems;
+}
+
+int sys_sem_up(int id) {
+	bool irq = irq_save();
+	++sems[id].cnt;
+	// TODO ping waiters
+	irq_restore(irq);
+	return -1;
+}
+
+int sys_sem_down(int id) {
+	struct sem *s = &sems[id];
+	bool irq = irq_save();
+	if (s->cnt) {
+		--s->cnt;
+		goto out;
+	}
+
+	while (1) {
+		irq_restore(irq);
+		// TODO sleep
+		sched(true);
+		irq = irq_save();
+		if (s->cnt) {
+			--s->cnt;
+			break;
+		}
+	}
+out:
+	irq_restore(irq);
+	return 0;
+}
+
+int sys_sleep(int msec) {
+	if (msec == 0) {
+		sched(true);
+		return 0;
+	}
+
+	int till = 1000 * msec + time_current();
+	while (time_current() < till) {
+		/*sched(true);*/
+	}
+	return 0;
+}
+
+int sys_uptime(void) {
+	return time_current();
 }

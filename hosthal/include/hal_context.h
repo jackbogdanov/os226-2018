@@ -1,11 +1,11 @@
 #pragma once
 
-#define HOST_UCTX_SZ 0x10000
-struct context {
-	char host_uctx[HOST_UCTX_SZ];
-};
-
-struct context_call_save {
-	unsigned long calltraget;
-	unsigned long spbeforearg;
+struct uctx {
+	unsigned long rbx;
+	unsigned long r12;
+	unsigned long r13;
+	unsigned long r14;
+	unsigned long r15;
+	unsigned long rsp;
+	unsigned long rbp;
 };

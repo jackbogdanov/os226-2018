@@ -1,6 +1,7 @@
 
 #include "util.h"
 #include "exn.h"
+#include "ksys.h"
 
 #define EXN_N_MAX 64
 
@@ -29,4 +30,5 @@ void exn_do(int exn, struct context *c) {
 	}
 
 	e->hnd(exn, c, e->arg);
+	sched_handle_posted();
 }

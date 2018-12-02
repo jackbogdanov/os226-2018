@@ -1,11 +1,13 @@
 #pragma once
 
+#include <stdbool.h>
+
 #include "kernel/syscall.h"
 
 struct context;
 
 #define DO_DECLARE(ret, name, ...) \
-	extern ret sys_ ## name(struct context *ctx, ## __VA_ARGS__ )
+	extern ret sys_ ## name(__VA_ARGS__)
 #define DECLARE0(ret, name) \
 	DO_DECLARE(ret, name);
 #define DECLARE1(ret, name, type1, name1) \
@@ -30,4 +32,10 @@ SYSCALL_XN(DECLARE)
 #undef DECLARE
 #undef DO_DECLARE
 
-int run_first(char *argv[]);
+extern int rootfs_cpio_init(void *p);
+
+extern int sched_init(void);
+
+extern void sched(bool voluntary);
+
+extern void sched_handle_posted(void);

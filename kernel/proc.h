@@ -1,20 +1,31 @@
 #pragma once
 
+#include <stdbool.h>
 #include "hal_context.h"
+#include "third-party/queue.h"
 
 struct proc {
-	struct proc *prev;
-	struct context savectx;
+	TAILQ_ENTRY(proc) lentry;
+	struct uctx ctx;
+	struct proc *parent;
 
-	void *freemark;
+	int code;
+
+	bool sleep;
+	bool inqueue;
+	bool exited;
 
 	void *load;
-	int loadsz;
-	void *stack;
-	int stacksz;
+	int loadn;
 
+	void *stack;
+	int stackn;
+
+	void *argvb;
+	int argvbn;
 	char **argv;
-	int *code;
+	int nargv;
+	void (*entry)(void);
 };
 
 extern struct proc *current_process();

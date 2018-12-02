@@ -5,11 +5,17 @@
 typedef void (*tramp_t)(void *arg);
 
 #define SYSCALL_XN(x) \
-	x(run, int, 2, char**, argv, int*, exitcode) \
+	x(run, int, 1, char**, argv) \
+	x(wait, int, 1, int, id) \
 	x(getargv, int, 4, char *, buf, int, bufsz, char **, argv, int, argvsz) \
 	x(exit, int, 1, int, exitcode) \
 	x(write, int, 3, int, fd, const void *, buf, size_t, len) \
 	x(read, int, 3, int, fd, void *, buffer, size_t, size) \
+	x(sem_alloc, int, 1, int, cnt) \
+	x(sem_up, int, 1, int, id) \
+	x(sem_down, int, 1, int, id) \
+	x(sleep, int, 1, int, msec) \
+	x(uptime, int, 0) \
 
 #define ENUM_LIST(name, ...) os_syscall_nr_ ## name,
 enum syscalls_num {
@@ -32,7 +38,7 @@ static inline long os_syscall(int syscall,
 }
 
 #define DEFINE0(ret, name) \
-	static inline ret os_ ## name () { \
+	static inline ret os_ ## name (void) { \
 		return (ret) os_syscall(os_syscall_nr_ ## name, 0, 0, 0, 0, (void *) 0); \
 	}
 #define DEFINE1(ret, name, type1, name1) \

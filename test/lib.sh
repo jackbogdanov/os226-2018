@@ -9,8 +9,12 @@ check_out() {
 	diff -q $pat.out $pat.out.gold
 }
 
-make_eduos() {
-	make clean all
+check_out2() {
+	local pat=$1
+	shift 1
+
+	while read l; do echo $l; sleep 0.1; done <$pat.in | "$@" >$pat.out
+	diff -u $pat.out $pat.out.gold
 }
 
 cd $TESTDIR/..

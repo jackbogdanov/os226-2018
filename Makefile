@@ -33,7 +33,7 @@ LIBC = $(BUILD)/libc.a
 
 KSRC = $(wildcard kernel/*.c)
 KOBJ = $(KSRC:%.c=$(BUILD)/%.o)
-$(KOBJ) : CFLAGS += $(PCFLAGS) $(HCLFAGS) -iquote =/include #-iquote ./kernel
+$(KOBJ) : CFLAGS += $(PCFLAGS) $(HCLFAGS) -iquote =/include -iquote ./kernel
 
 HCSRC = $(wildcard $(HALDIR)/*.c)
 HSSRC = $(wildcard $(HALDIR)/*.S)
@@ -51,7 +51,7 @@ $(AOBJ) : CFLAGS += $(UCFLAGS) -fPIC
 
 $(AOBJ:%.o=%) : $(LIBC)
 $(AEXE) : % : %.o
-	ld -nostdlib -N -e _main -o $@ $< $(LIBC)
+	ld --pic-executable -nostdlib -N -e _main -o $@ $< $(LIBC)
 
 all : $(IMAGE) $(ROOTFS)
 

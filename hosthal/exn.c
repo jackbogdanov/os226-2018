@@ -13,8 +13,14 @@
 #include "util.h"
 #include "init.h"
 #include "exn.h"
+#include "palloc.h"
 
 #include "hostexn.h"
+
+/* AMD64 Sys V ABI, 3.2.2 The Stack Frame:
+The 128-byte area beyond the location pointed to by %rsp is considered to
+be reserved and shall not be modified by signal or interrupt handlers */
+#define SYSV_REDST_SZ 128
 
 #define SECTION(x) __attribute__((section(# x)))
 #define ALIGN(x) __attribute__((aligned(x)))
@@ -35,6 +41,30 @@ struct kmmap {
 	int n;
 };
 
+struct exn_ctx {
+	unsigned long r15;
+	unsigned long r14;
+	unsigned long r13;
+	unsigned long r12;
+	unsigned long r11;
+	unsigned long r10;
+	unsigned long r9;
+	unsigned long r8;
+	unsigned long rdi;
+	unsigned long rsi;
+	unsigned long rdx;
+	unsigned long rcx;
+	unsigned long rbx;
+	unsigned long rax;
+	unsigned long rflags;
+	unsigned long target;
+	unsigned long sp;
+	unsigned long exn;
+	unsigned long rip;
+};
+
+extern void tramptramp(void);
+
 static struct kmmap BSECTION kmmap;
 static char BSECTION stackbuf[0x5000];
 static stack_t signal_stack = {
@@ -42,20 +72,30 @@ static stack_t signal_stack = {
 	.ss_size = sizeof(stackbuf),
 };
 
-static bool syscall_hnd(int exn, struct context *c, void *arg) {
-	ucontext_t *uc = (ucontext_t *) c;
-	greg_t *regs = uc->uc_mcontext.gregs;
+static sigset_t irqsig;
 
-	if (0x81cd != *(uint16_t *) regs[REG_RIP]) {
+static void hctx_push(greg_t *regs, unsigned long val) {
+	regs[REG_RSP] -= sizeof(unsigned long);
+	*(unsigned long *) regs[REG_RSP] = val;
+}
+
+static void exntramp(struct exn_ctx *ctx) {
+	exn_do(ctx->exn, (struct context *) ctx);
+}
+
+static bool syscall_hnd(int exn, struct context *_ctx, void *arg) {
+	struct exn_ctx *ctx = (struct exn_ctx *) _ctx;
+
+	if (0x81cd != *(uint16_t *) ctx->rip) {
 		return false;
 	}
-	regs[REG_RIP] += 2;
 
-	unsigned long ret = syscall_do(c, regs[REG_RAX],
-			regs[REG_RBX], regs[REG_RCX],
-			regs[REG_RDX], regs[REG_RSI],
-			(void *) regs[REG_RDI]);
-	regs[REG_RAX] = ret;
+	ctx->rip += 2;
+	ctx->rax = syscall_do(ctx->rax,
+			ctx->rbx, ctx->rcx,
+			ctx->rdx, ctx->rsi,
+			(void *) ctx->rdi);
+
 	return true;
 }
 
@@ -77,9 +117,9 @@ static void TSECTION host_vm_prot(bool restore) {
 	if (!restore) {
 		struct proc *curp = current_process();
 		load = curp->load;
-		loadsz = curp->loadsz;
+		loadsz = PSIZE * curp->loadn;
 		stack = curp->stack;
-		stacksz = curp->stacksz;
+		stacksz = PSIZE * curp->stackn;
 	}
 
 	for (struct mmapent *e = kmmap.procmaps; e < kmmap.procmaps + ARRAY_SIZE(kmmap.procmaps); ++e) {
@@ -94,8 +134,19 @@ static void TSECTION host_vm_prot(bool restore) {
 
 static void TSECTION sighnd(int sig, siginfo_t *info, void *ctx) {
 	host_vm_prot(true);
-	exn_do(sig, (struct context *) ctx);
-	host_vm_prot(false);
+
+	ucontext_t *uc = (ucontext_t *) ctx;
+	greg_t *regs = uc->uc_mcontext.gregs;
+
+	unsigned long oldsp = regs[REG_RSP];
+	regs[REG_RSP] -= SYSV_REDST_SZ;
+	hctx_push(regs, regs[REG_RIP]);
+	hctx_push(regs, sig);
+	hctx_push(regs, oldsp);
+	hctx_push(regs, (unsigned long) exntramp);
+	regs[REG_RIP] = (greg_t) tramptramp;
+
+	// host_vm_prot(false); // FIXME
 }
 
 static int chprot2prot(char r, char w, char x) {
@@ -118,7 +169,7 @@ static bool add_procmap(unsigned long from, unsigned long to, int prot) {
 	return true;
 }
 
-static int host_vm_init(void) {
+int host_vm_init(void *mem, size_t memsz) {
 	extern char host_vm_text_start, host_vm_text_end, host_vm_bss_start, host_vm_bss_end;
 	struct {
 		unsigned long from;
@@ -126,7 +177,7 @@ static int host_vm_init(void) {
 	} prothole[] = {
 		{ (unsigned long) &host_vm_text_start, (unsigned long) &host_vm_text_end },
 		{ (unsigned long) &host_vm_bss_start,  (unsigned long) &host_vm_bss_end },
-		{ (unsigned long) kernel_globals.mem,  (unsigned long) ((char *) kernel_globals.mem + kernel_globals.memsz) },
+		{ (unsigned long) mem,                 (unsigned long) ((char*)mem + memsz) },
 	};
 
 	bool ok = true;
@@ -173,12 +224,24 @@ static int host_vm_init(void) {
 	return 0;
 }
 
+bool irq_save(void) {
+	sigset_t old;
+	if (sigprocmask(SIG_BLOCK, &irqsig, &old)) {
+		perror("cannot block irq");
+	}
+	return !sigismember(&old, SIGALRM); // Any signal
+}
+
+void irq_restore(bool v) {
+	if (v) {
+		if (sigprocmask(SIG_UNBLOCK, &irqsig, NULL)) {
+			perror("cannot unblock irq");
+		}
+	}
+}
+
 int exn_init(void) {
        int res;
-
-       if ((res = host_vm_init())) {
-	       return res;
-       }
 
        if (sigaltstack(&signal_stack, NULL)) {
 	       perror("sigaltstack");
@@ -193,16 +256,18 @@ int exn_init(void) {
                .sa_sigaction = sighnd,
                .sa_flags = SA_RESTART | SA_ONSTACK,
        };
-       sigemptyset(&act.sa_mask);
-       for (int i = 1; i < 32; ++i) {
-               if (i == SIGKILL || i == SIGSTOP) {
-                       continue;
-               }
-               if (-1 == sigaction(i, &act, NULL)) {
+       sigfillset(&act.sa_mask);
+       sigfillset(&irqsig);
+
+       int sigs[] = {
+	       SIGSEGV,
+	       SIGALRM,
+       };
+       for (int i = 0; i < ARRAY_SIZE(sigs); ++i) {
+               if (-1 == sigaction(sigs[i], &act, NULL)) {
                        perror("irq init failed");
                        return -1;
                }
        }
-
        return 0;
 }

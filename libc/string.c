@@ -1,5 +1,6 @@
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <string.h>
 
 int strcmp(const char *s1, const char *s2) {
@@ -97,4 +98,25 @@ int memcmp(const void *s1, const void *s2, size_t n) {
 		}
 	}
 	return 0;
+}
+
+long int strtol(const char *nptr, char **endptr, int base) {
+	long res = 0;
+	bool mflag = false;
+
+	const char *p = nptr;
+	if (*p == '-') {
+		mflag = true;
+		++p;
+	}
+
+	while ('0' <= *p && *p <= '0' + base - 1) {
+		res = res * base + *p - '0';
+		++p;
+	}
+
+	if (endptr) {
+		*endptr = (char*) p;
+	}
+	return mflag ? -res : res;
 }

@@ -10,8 +10,7 @@
 #include "hal/dbg.h"
 
 void dbg_out(const char *msg, int len) {
-	fwrite(msg, len, 1, stdout);
-	fflush(stdout);
+	write(1, msg, len);
 }
 
 int dbg_in(char *inp, int len) {
@@ -21,4 +20,9 @@ int dbg_in(char *inp, int len) {
 
 void hal_halt(void) {
 	exit(0);
+}
+
+int dbg_pause(void) {
+	pause();
+	return 0;
 }

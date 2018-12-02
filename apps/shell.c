@@ -38,7 +38,12 @@ int main(int argc, char *argv[]) {
 				break;
 			}
 
-			os_run(argv, NULL);
+			int p = os_run(argv);
+			if (0 <= p) {
+				os_wait(p);
+			} else {
+				rprintf("error on running \"%s\"\n", argv[0]);
+			}
 			cmd = strtok_r(NULL, comsep, &stcmd);
 		}
 	}
