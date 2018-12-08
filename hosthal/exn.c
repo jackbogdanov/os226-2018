@@ -17,6 +17,8 @@
 
 #include "hostexn.h"
 
+#include "hal/dbg.h"
+
 /* AMD64 Sys V ABI, 3.2.2 The Stack Frame:
 The 128-byte area beyond the location pointed to by %rsp is considered to
 be reserved and shall not be modified by signal or interrupt handlers */
@@ -39,28 +41,6 @@ struct kmmap {
 	struct mmapent unlock_bss;
 	struct mmapent procmaps[128];
 	int n;
-};
-
-struct exn_ctx {
-	unsigned long r15;
-	unsigned long r14;
-	unsigned long r13;
-	unsigned long r12;
-	unsigned long r11;
-	unsigned long r10;
-	unsigned long r9;
-	unsigned long r8;
-	unsigned long rdi;
-	unsigned long rsi;
-	unsigned long rdx;
-	unsigned long rcx;
-	unsigned long rbx;
-	unsigned long rax;
-	unsigned long rflags;
-	unsigned long target;
-	unsigned long sp;
-	unsigned long exn;
-	unsigned long rip;
 };
 
 extern void tramptramp(void);
@@ -91,12 +71,12 @@ static bool syscall_hnd(int exn, struct context *_ctx, void *arg) {
 	}
 
 	ctx->rip += 2;
-	ctx->rax = syscall_do(ctx->rax,
+	ctx->rax = syscall_do(_ctx, ctx->rax,
 			ctx->rbx, ctx->rcx,
 			ctx->rdx, ctx->rsi,
 			(void *) ctx->rdi);
 
-	return true;
+		return true;
 }
 
 static int TSECTION sysmprotect(void *addr, size_t size, int prot) {

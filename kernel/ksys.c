@@ -313,7 +313,8 @@ void proctramp(void) {
 	curp->entry();
 }
 
-int sys_run(char *argv[]) {
+int sys_run(struct context *ctx, char *argv[]) {
+	dbg_out("ALL OK\n", 7);
 	if (!argv[0]) {
 		return -1;
 	}
@@ -350,7 +351,7 @@ int sys_run(char *argv[]) {
 	bool irq = irq_save();
 	sched_add(newp);
 	irq_restore(irq);
-
+	dbg_out("ALL OK\n", 7);
 	return newp - procspace;
 
 failstack:
@@ -361,7 +362,7 @@ failproc:
 	return -1;
 }
 
-int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
+int sys_getargv(struct context *ctx, char *buf, int bufsz, char **argv, int argvsz) {
 	int argc = 0;
 	char *bufp = buf;
 
@@ -386,7 +387,7 @@ int sys_getargv(char *buf, int bufsz, char **argv, int argvsz) {
 	return argc;
 }
 
-int sys_exit(int code) {
+int sys_exit(struct context *ctx, int code) {
 	if (!curp->parent) {
 		// init exits
 		hal_halt();
@@ -402,7 +403,7 @@ int sys_exit(int code) {
 	return 0;
 }
 
-int sys_wait(int id) {
+int sys_wait(struct context *ctx, int id) {
 	if (id < 0 || ARRAY_SIZE(procspace) <= id) {
 		return -1;
 	}
@@ -424,16 +425,16 @@ int sys_wait(int id) {
 	return code;
 }
 
-int sys_read(int f, void *buf, size_t sz) {
+int sys_read(struct context *ctx, int f, void *buf, size_t sz) {
 	return dbg_in(buf, sz);
 }
 
-int sys_write(int f, const void *buf, size_t sz) {
+int sys_write(struct context *ctx, int f, const void *buf, size_t sz) {
 	dbg_out(buf, sz);
 	return 0;
 }
 
-int sys_sem_alloc(int cnt) {
+int sys_sem_alloc(struct context *ctx, int cnt) {
 	bool irq = irq_save();
 	struct sem *s = pool_alloc(&sempool);
 	irq_restore(irq);
@@ -445,7 +446,7 @@ int sys_sem_alloc(int cnt) {
 	return s - sems;
 }
 
-int sys_sem_up(int id) {
+int sys_sem_up(struct context *ctx, int id) {
 	bool irq = irq_save();
 	++sems[id].cnt;
 	// TODO ping waiters
@@ -453,7 +454,7 @@ int sys_sem_up(int id) {
 	return -1;
 }
 
-int sys_sem_down(int id) {
+int sys_sem_down(struct context *ctx, int id) {
 	struct sem *s = &sems[id];
 	bool irq = irq_save();
 	if (s->cnt) {
@@ -476,7 +477,7 @@ out:
 	return 0;
 }
 
-int sys_sleep(int msec) {
+int sys_sleep(struct context *ctx, int msec) {
 	if (msec == 0) {
 		sched(true);
 		return 0;
@@ -489,12 +490,12 @@ int sys_sleep(int msec) {
 	return 0;
 }
 
-int sys_uptime(void) {
+int sys_uptime(struct context *ctx) {
 	return time_current();
 }
 
 
-int sys_fork(void) {
+int sys_fork(struct context *ctx) {
 
 	struct proc *newp = pool_alloc(&procpool);
 	if (!newp) {
@@ -543,7 +544,8 @@ int sys_fork(void) {
 
 	//ctx_make(&newp->ctx, proctramp, newp->stack, PSIZE * newp->stackn);
 	dbg_out("before_copy\n", 12);
-	ctx_copy(&newp->ctx, &curp->ctx, newp->stack - curp->stack + 1);
+	ctx_copy(&newp->ctx, ctx, newp->stack - curp->stack);
+
         dbg_out("after_copy\n", 11);
 	bool irq = irq_save();
 	sched_add(newp);

@@ -7,7 +7,7 @@
 struct context;
 
 #define DO_DECLARE(ret, name, ...) \
-	extern ret sys_ ## name(__VA_ARGS__)
+	extern ret sys_ ## name(struct context *ctx, ## __VA_ARGS__ )
 #define DECLARE0(ret, name) \
 	DO_DECLARE(ret, name);
 #define DECLARE1(ret, name, type1, name1) \
