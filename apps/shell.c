@@ -6,8 +6,6 @@
 #include <kernel/syscall.h>
 
 int main(int argc, char *argv[]) {
-	rprintf("GOOD!\n");
-
 	while (1) {
 		rprintf("> ");
 		char buffer[256];

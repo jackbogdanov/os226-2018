@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include "hal_context.h"
 #include "third-party/queue.h"
+#include "exn.h"
+
+#define CHILDS_COUNT 5
 
 struct proc {
 	TAILQ_ENTRY(proc) lentry;
@@ -14,6 +17,16 @@ struct proc {
 	bool sleep;
 	bool inqueue;
 	bool exited;
+
+	bool first_run_fork;
+	bool is_exit;
+
+	struct proc *forkParent;
+	struct exn_ctx full_ctx;
+	struct proc *childs[CHILDS_COUNT];
+
+	int child_next;
+	int childs_count;
 
 	void *load;
 	int loadn;

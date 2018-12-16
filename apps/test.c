@@ -1,17 +1,14 @@
 #include <stdio.h>
 #include <kernel/syscall.h>
-
 int main(int argc, char *argv[]) {
-	
-	rprintf("BEFORE FORK\n");
-        rprintf(argv[0]);
+	rprintf("BEFORE\n");
 
-	os_fork();
+	int res = os_fork();
 	for (int i = 0; i < 50; ++i) {
 		rprintf("%d\n", i);
 	}
+	rprintf("fork results %d\n", res);
 
-	rprintf(argv[0]);
-
+	rprintf("end\n");
 	return 0;
 }

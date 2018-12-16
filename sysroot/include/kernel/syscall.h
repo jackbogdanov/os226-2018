@@ -16,7 +16,7 @@ typedef void (*tramp_t)(void *arg);
 	x(sem_down, int, 1, int, id) \
 	x(sleep, int, 1, int, msec) \
 	x(uptime, int, 0) \
-        x(fork, int, 0) \
+	x(fork, int, 0) \
 
 #define ENUM_LIST(name, ...) os_syscall_nr_ ## name,
 enum syscalls_num {

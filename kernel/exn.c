@@ -30,5 +30,5 @@ void exn_do(int exn, struct context *c) {
 	}
 
 	e->hnd(exn, c, e->arg);
-	sched_handle_posted();
+	sched_handle_posted(c);
 }

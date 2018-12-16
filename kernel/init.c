@@ -36,6 +36,7 @@ void kernel_start(void) {
 	}
 
 	while (true) {
-		sched(true);
+		//sched(NULL, true);
+		//dbg_out("kernel\n", 7);
 	}
 }

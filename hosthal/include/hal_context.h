@@ -8,4 +8,5 @@ struct uctx {
 	unsigned long r15;
 	unsigned long rsp;
 	unsigned long rbp;
+	unsigned long rip;
 };

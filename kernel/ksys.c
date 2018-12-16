@@ -14,8 +14,11 @@
 #include "hal/dbg.h"
 #include "hal/exn.h"
 
+#include "exn.h"
 #include "ksys.h"
 #include "proc.h"
+
+struct exn_ctx;
 
 struct cpio_old_hdr {
 	unsigned short   c_magic;
@@ -232,7 +235,24 @@ static struct proc *sched_next(void) {
 	return TAILQ_FIRST(&squeue);
 }
 
-static void sched_wake(struct proc *p) {
+static void prepare_mem(struct proc *old, struct proc *new) {
+	void *tmp_stack = palloc(old->stackn);
+	void *tmp_load = palloc(old->loadn);
+
+	memcpy(tmp_stack, old->stack, old->stackn * PSIZE);
+	memcpy(tmp_load, old->load, old->loadn * PSIZE);
+
+	memcpy(old->stack, new->stack, old->stackn * PSIZE);
+	memcpy(old->load, new->load, old->loadn * PSIZE);
+
+	memcpy(new->stack, tmp_stack, old->stackn * PSIZE);
+	memcpy(new->load, tmp_load, old->loadn * PSIZE);
+	
+	new->entry = curp->entry;
+	prepare_stack(new, old);
+}
+
+/*static void sched_wake(struct proc *p) {
 	bool irq = irq_save();
 	if (!p->inqueue) {
 		sched_add(p);
@@ -241,9 +261,9 @@ static void sched_wake(struct proc *p) {
 		p->sleep = false;
 	}
 	irq_restore(irq);
-}
+}*/
 
-void sched(bool voluntary) {
+void sched(struct context *ctx, bool voluntary) {
 	bool irq = irq_save();
 
 	assert(!curp->inqueue);
@@ -253,6 +273,18 @@ void sched(bool voluntary) {
 	if (!curp->sleep || !voluntary) {
 		sched_add(curp);
 	}
+	bool flag = false;
+	for (int i = 0; i < CHILDS_COUNT; i++) {
+		if (curp->childs[i] != NULL) {
+			flag = true;
+			break;				
+		}		
+	}
+	if (!flag) {
+		curp->is_exit = true;
+	} else {
+		curp->is_exit = false;
+	}	
 
 #if 0
 	kprint("P %d %p %d %p ", curp - procspace, curp->stack, curp->stackn, curp->ctx.rsp);
@@ -274,21 +306,37 @@ void sched(bool voluntary) {
 		struct proc *old = curp;
 		struct proc *new = nextp;
 		curp = nextp;
-		ctx_switch(&old->ctx, &new->ctx);
+		if (old->forkParent != NULL) {
+			prepare_mem(old->forkParent, old);
+		}
+		if (new->forkParent != NULL) {
+			prepare_mem(new->forkParent, new);
+		}
+		if (new->first_run_fork) {
+			new->first_run_fork = false;		
+			new->ctx.r12 = (unsigned long)ctx;
+			irq_restore(true);
+			ctx_switch_fork(&old->ctx, &new->ctx);
+		} else {
+			ctx_switch(&old->ctx, &new->ctx);
+		}				
 	}
 
 	irq_restore(irq);
 }
 
 
+
+
+
 static void preempt_sched(void *arg) {
 	sched_posted = true;
 }
 
-void sched_handle_posted(void) {
+void sched_handle_posted(struct context *ctx) {
 	if (sched_posted) {
 		sched_posted = false;
-		sched(false);
+		sched(ctx, false);   
 	}
 }
 
@@ -299,6 +347,8 @@ int sched_init(void) {
 	}
 	newp->inqueue = false;
 	newp->sleep = false;
+	newp->forkParent = NULL;
+	newp->is_exit = true;
 	curp = newp;
 
 	sched_posted = false;
@@ -314,7 +364,6 @@ void proctramp(void) {
 }
 
 int sys_run(struct context *ctx, char *argv[]) {
-	dbg_out("ALL OK\n", 7);
 	if (!argv[0]) {
 		return -1;
 	}
@@ -324,9 +373,29 @@ int sys_run(struct context *ctx, char *argv[]) {
 		goto failproc;
 	}
 	newp->parent = curp;
+	
+	if (ctx) {
+		if (curp->child_next < CHILDS_COUNT) {
+			curp->childs[curp->child_next] = newp;
+			newp->childs_count = curp->child_next;
+			curp->child_next++;
+			curp->is_exit = false;
+		} else {
+			goto failproc;	
+		}
+	} 
+
+	newp->is_exit = true;	
+	newp->first_run_fork = false;
 	newp->inqueue = false;
 	newp->sleep = false;
 	newp->exited = false;
+	newp->forkParent = NULL;
+	newp->child_next = 0;
+
+	for (int i = 0; i < CHILDS_COUNT; i++) {
+		newp->childs[i] = NULL;
+	}
 
 	void *entry;
 	if (load(argv[0], &entry, newp)) {
@@ -351,7 +420,7 @@ int sys_run(struct context *ctx, char *argv[]) {
 	bool irq = irq_save();
 	sched_add(newp);
 	irq_restore(irq);
-	dbg_out("ALL OK\n", 7);
+
 	return newp - procspace;
 
 failstack:
@@ -392,13 +461,17 @@ int sys_exit(struct context *ctx, int code) {
 		// init exits
 		hal_halt();
 	}
-
 	curp->code = code;
-	curp->exited = true;
-	sched_wake(curp->parent);
+	while (!curp->is_exit) {
+		sched(ctx, true);
+	}
+	
+	curp->parent->childs[curp->childs_count] = NULL;
+	//sched_wake(curp->parent);
 	while (true) {
+		curp->exited = true;
 		curp->sleep = true;
-		sched(true);
+		sched(ctx, true);
 	}
 	return 0;
 }
@@ -409,12 +482,12 @@ int sys_wait(struct context *ctx, int id) {
 	}
 
 	struct proc *child = &procspace[id];
-	curp->sleep = true;
+	//curp->sleep = true;
 	while (!child->exited) {
-		sched(true);
-		curp->sleep = true;
+		sched(ctx, true);
+		//curp->sleep = true;
 	}
-	curp->sleep = false;
+	//curp->sleep = false;
 
 	assert(!child->inqueue && child->sleep);
 	int code = child->code;
@@ -465,7 +538,7 @@ int sys_sem_down(struct context *ctx, int id) {
 	while (1) {
 		irq_restore(irq);
 		// TODO sleep
-		sched(true);
+		sched(ctx, true);
 		irq = irq_save();
 		if (s->cnt) {
 			--s->cnt;
@@ -477,9 +550,78 @@ out:
 	return 0;
 }
 
+
+
+int sys_fork(struct context *ctx) {
+	struct proc *newp = pool_alloc(&procpool);
+	if (!newp) {
+		goto failproc;
+	}
+	
+	newp->parent = curp;
+	newp->inqueue = false;
+	newp->sleep = false;
+	newp->exited = false;
+	newp->first_run_fork = true;
+	newp->is_exit = true;
+	
+
+	if (curp->child_next < CHILDS_COUNT) {
+		curp->childs[curp->child_next] = newp;
+		newp->childs_count = curp->child_next;
+		curp->child_next++;
+		curp->is_exit = false;
+	} else {
+		goto failproc;	
+	}
+	newp->child_next = 0;
+	for (int i = 0; i < CHILDS_COUNT; i++) {
+		newp->childs[i] = NULL;
+	}
+	
+	
+	char **argv = (char **) curp->argv;
+	
+	newp->loadn = curp->loadn;
+	newp->load = palloc(newp->loadn);
+
+
+	memset(newp->load, 0, PSIZE * newp->loadn);
+	memcpy(newp->load, curp->load, PSIZE * newp->loadn);
+	
+	newp->forkParent = curp;	
+
+	newp->stackn = curp->stackn;
+	newp->stack = palloc(newp->stackn);
+	memcpy(newp->stack, curp->stack, PSIZE * newp->stackn);
+
+	if (!newp->stack) {
+		goto failstack;
+	}
+
+
+	int nargv;
+	int asize = argv_size(argv, &nargv);
+	newp->argvbn = psize(asize);
+	newp->argvb = palloc(newp->argvbn);
+	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
+	newp->nargv = nargv;
+
+	ctx_copy((struct context*)&newp->full_ctx, ctx);
+
+	bool irq = irq_save();
+	sched_add(newp);
+	irq_restore(irq);
+	return 1;
+failstack:
+	unload(newp);
+failproc:
+	return -1;
+}
+
 int sys_sleep(struct context *ctx, int msec) {
 	if (msec == 0) {
-		sched(true);
+		sched(ctx, true);
 		return 0;
 	}
 
@@ -493,79 +635,3 @@ int sys_sleep(struct context *ctx, int msec) {
 int sys_uptime(struct context *ctx) {
 	return time_current();
 }
-
-
-int sys_fork(struct context *ctx) {
-
-	struct proc *newp = pool_alloc(&procpool);
-	if (!newp) {
-		goto failproc;
-	}
-	
-	dbg_out("inFORK\n", 7);
-	newp->parent = curp;
-	newp->inqueue = false;
-	newp->sleep = false;
-	newp->exited = false;
-
-	char **argv = (char **) curp->argv;
-	
-	argv[0][1] = '!';
-	
-	//LOADING
-	
-	newp->loadn = curp->loadn;
-	newp->load = palloc(newp->loadn);
-
-	memset(newp->load, 0, PSIZE * newp->loadn);
-	memcpy(newp->load, &curp->load, PSIZE * curp->loadn);
-
-	void *entry = curp->entry + (newp->load - curp->load + 1);
-
-	//
-	
-
-	newp->stackn = curp->stackn;
-	newp->stack = palloc(newp->stackn);
-	memcpy(newp->stack, &curp->stack, PSIZE * newp->stackn);
-
-	if (!newp->stack) {
-		goto failstack;
-	}
-
-	int nargv;
-	int asize = argv_size(argv, &nargv);
-	newp->argvbn = psize(asize);
-	newp->argvb = palloc(newp->argvbn);
-	newp->argv = argv_copy(newp->argvb, asize, argv, nargv);
-	newp->nargv = nargv;
-	newp->entry = entry;
-
-
-	//ctx_make(&newp->ctx, proctramp, newp->stack, PSIZE * newp->stackn);
-	dbg_out("before_copy\n", 12);
-	ctx_copy(&newp->ctx, ctx, newp->stack - curp->stack);
-
-        dbg_out("after_copy\n", 11);
-	bool irq = irq_save();
-	sched_add(newp);
-	irq_restore(irq);
-
-	return newp - procspace;
-
-failstack:
-	unload(newp);
-failproc:
-	return -1;
-}
-
-
-
-
-
-
-
-
-
-
-

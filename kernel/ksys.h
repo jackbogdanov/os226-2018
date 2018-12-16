@@ -36,6 +36,6 @@ extern int rootfs_cpio_init(void *p);
 
 extern int sched_init(void);
 
-extern void sched(bool voluntary);
+extern void sched(struct context *ctx, bool voluntary);
 
-extern void sched_handle_posted(void);
+extern void sched_handle_posted(struct context *ctx);

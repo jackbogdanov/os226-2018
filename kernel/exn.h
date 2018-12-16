@@ -22,10 +22,10 @@ struct exn_ctx {
 	unsigned long rflags;
 	unsigned long target;
 	unsigned long sp;
+	unsigned long saved_rbp;
 	unsigned long exn;
 	unsigned long rip;
 };
-
 
 typedef bool (*exn_hnd_t)(int exn, struct context *c, void *arg);
 
